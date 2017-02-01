@@ -16,11 +16,16 @@ typedef struct {
 	Mat c_iter_mat_bin_world;
 	Mat last_iter_mat_bin_world;
 
+	Mat c_binary_obj;
+	Mat last_binary_obj;
+
 	float mass;
 	float restitution;
 	float friction;
+	b2Vec2 c_v;
 	b2Vec2 last_v;
 	// last angle_v, a; body->GetAngularVelocity()
+	b2Vec2 c_a;
 	b2Vec2 last_a;
 
 	b2Vec2 c_position;
@@ -29,8 +34,8 @@ typedef struct {
 	float32 last_angle;
 } BodyData;
 
-const int ENUM_DATALAYERS_COUNT = 7;
-enum DataLayers {obj, mass, restitution, v_x, v_y, a_x, a_y};
+const int ENUM_DATALAYERS_COUNT = 8; // missing the angular vel and acc
+enum DataLayers {world, obj, mass, restitution, v_x, v_y, a_x, a_y};
 
 
 bool should_record = false;
@@ -48,6 +53,10 @@ float simDist2Draw(float dist) {
 
 inline Point2f b2Vec22Point2f(const b2Vec2 v) {
 	return Point2f(v.x, v.y);
+}
+
+inline Vec2f b2Vec22Vec2f(const b2Vec2 v) {
+	return Vec2f(v.x, v.y);
 }
 
 b2Vec2 simPosition2Draw(const b2Vec2 v, const Size& size = IMAGE_SIZE) {
@@ -147,7 +156,7 @@ inline void cropSmallBinaryFloatImage(b2Body* bd,
 	Mat small_frame = getBodyImage(bd->GetWorldCenter(), frame);
 	Mat small_crop;
 	cv::cvtColor(small_frame, small_crop, CV_BGR2GRAY);
-	small_crop = (small_crop != 0);
+	small_crop = (small_crop != 255);
 	small_crop.convertTo(binaryf_crop, CV_32FC1, 1.0 / 255.0);
 }
 
@@ -157,7 +166,7 @@ void createRandomBody(b2World& world, bool isBox = true) {
 	b2BodyDef bodyDef;
 	bodyDef.type = b2_dynamicBody;
 	float x = rand() % 32 - 16;
-	float y = rand() % 32 + 31;
+	float y = rand() % 32 + 25;
 	bodyDef.position.Set(x, y);
 	b2Body* body = world.CreateBody(&bodyDef);
 
@@ -263,7 +272,7 @@ int main(int argc, char** argv) {
 	B2_NOT_USED(argc);
 	B2_NOT_USED(argv);
 	// srand(time(NULL));
-	srand(0);
+	srand(11);
 
 	// Define the gravity vector.
 	// b2Vec2 gravity(0.0f, -9.8f);
@@ -290,6 +299,11 @@ int main(int argc, char** argv) {
 	int32 positionIterations = 2;
 	b2Vec2 force_dir; float max_force = 2000.0f;
 	force_dir.Set(0, 0);
+	unsigned long long data_obj_id = 0;
+	string filename = "sim_data.xml";
+	FileStorage fs(filename, FileStorage::WRITE);
+	// fs.open(filename, FileStorage::READ);
+
 
 	// Video
 	VideoWriter outputVideo;	// Open the output
@@ -303,7 +317,7 @@ int main(int argc, char** argv) {
 	}
 
 	// Main loop
-	for (int32 i = 0; i < 200000; ++i) {
+	for (int32 i = 0; i < 10 * 60 * 7; ++i) {
 		// Run the physics
 		double t = (double)getTickCount();
 		world.Step(timeStep, velocityIterations, positionIterations);
@@ -311,15 +325,24 @@ int main(int argc, char** argv) {
 		// Extract data
 		Mat frame = Mat::ones(IMAGE_SIZE, CV_8UC3);
 		frame = CV_RGB(255, 255, 255);
+		Mat world_frame = Mat::zeros(IMAGE_SIZE, CV_32FC1);
+		Mat mass_frame = Mat::zeros(IMAGE_SIZE, CV_32FC1);
+		Mat restitution_frame = Mat::zeros(IMAGE_SIZE, CV_32FC1);
+		Mat v_x_frame = Mat::zeros(IMAGE_SIZE, CV_32FC1);
+		Mat v_y_frame = Mat::zeros(IMAGE_SIZE, CV_32FC1);
+		Mat a_x_frame = Mat::zeros(IMAGE_SIZE, CV_32FC1);
+		Mat a_y_frame = Mat::zeros(IMAGE_SIZE, CV_32FC1);
+
+
 		for (b2Body* bd = world.GetBodyList(); bd; bd = bd->GetNext()) {
 			Mat body_only_frame = Mat::ones(IMAGE_SIZE, CV_8UC3);
+			body_only_frame = CV_RGB(255, 255, 255);
 			for (b2Fixture* fx = bd->GetFixtureList(); fx; fx = fx->GetNext()) {
 				b2Shape* shape = fx->GetShape();
 				if (shape->GetType() == b2Shape::e_polygon) {
 					b2PolygonShape* poly = (b2PolygonShape*)shape;
 					drawPolyShape(poly, bd, frame);
 					drawPolyShape(poly, bd, body_only_frame);
-
 				} else if (shape->GetType() == b2Shape::e_circle) {
 					b2CircleShape* c = (b2CircleShape*)shape;
 					drawCircle(bd->GetWorldPoint(c->m_p), c->m_radius, frame);
@@ -327,57 +350,57 @@ int main(int argc, char** argv) {
 				}
 			}
 
+			Mat body_imgb;
+			Mat body_gray;
+			cv::cvtColor(body_only_frame, body_gray, CV_BGR2GRAY);
+			body_gray = (body_gray != 255);
+			body_gray.convertTo(body_imgb, CV_32FC1, 1.0 / 255.0); // now it's 0 & 1
+
+			world_frame += body_imgb;
+
 			// Update body data (v, a)
 			BodyData* customdata = (BodyData*)bd->GetUserData();
 			if (customdata != nullptr) {
 				b2Vec2 v = bd->GetLinearVelocity();
-				customdata->last_a = (v - customdata->last_v) / timeStep;
-				customdata->last_v = v;
+				customdata->c_a = (v - customdata->last_v) / timeStep;
+				customdata->c_v = v;
 				customdata->c_position = bd->GetPosition();
 				customdata->c_angle = bd->GetAngle();
 				// cout << "Updated custom data: " << customdata->last_a.x << " " <<
 				//      customdata->last_a.y << endl;
 
+				// Add to global mats
+				mass_frame += body_imgb * customdata->mass;
+				restitution_frame += body_imgb * customdata->restitution;
+				v_x_frame += body_imgb * customdata->last_v.x;
+				v_y_frame += body_imgb * customdata->last_v.y;
+				a_x_frame += body_imgb * customdata->last_a.x;
+				a_y_frame += body_imgb * customdata->last_a.y;
 				// Get needed data
 				Mat binaryf_crop;
 				cropSmallBinaryFloatImage(bd, body_only_frame, binaryf_crop);
-				// Mat binary_frame;
-				// Mat small_frame = getBodyImage(bd->GetWorldCenter(), body_only_frame);
-				// cv::cvtColor(small_frame, binary_frame, CV_BGR2GRAY);
-				// binary_frame = (binary_frame != 0); // binarize the image // /255?
-				// cv::threshold(binary_frame, binary_frame, 1, 255, cv::THRESH_BINARY);
-				imshow("small", binaryf_crop);
-
-				imshow("binary_float", binaryf_crop);
-				Mat mass_frame = binaryf_crop * customdata->mass;
-				Mat restitution_frame = binaryf_crop * customdata->restitution;
-				Mat v_x_frame = binaryf_crop * customdata->last_v.x;
-				Mat v_y_frame = binaryf_crop * customdata->last_v.y;
-				Mat a_x_frame = binaryf_crop * customdata->last_a.x;
-				Mat a_y_frame = binaryf_crop * customdata->last_a.y;
-
-				vector<Mat> channels(ENUM_DATALAYERS_COUNT);
-				channels[DataLayers::obj] = binaryf_crop;
-				channels[DataLayers::mass] = mass_frame;
-				channels[DataLayers::restitution] = restitution_frame;
-				channels[DataLayers::v_x] = v_x_frame;
-				channels[DataLayers::v_y] = v_y_frame;
-				channels[DataLayers::a_x] = a_x_frame;
-				channels[DataLayers::a_y] = a_y_frame;
-
-				Mat merged;
-				merge(channels, merged);
-
-				customdata->c_iter_mat = merged;
+				customdata->c_binary_obj = binaryf_crop;
 				bd->SetUserData(customdata);
+			} else {
+				// Part of surrounding world
+				float MAX_MASS = 909090;
+				mass_frame += body_imgb * MAX_MASS;
+				restitution_frame += body_imgb * 0;
+				v_x_frame += body_imgb * 0;
+				v_y_frame += body_imgb * 0;
+				a_x_frame += body_imgb * 0;
+				a_y_frame += body_imgb * 0;
+
 			}
 
 			// Apply a force
 			// bd->ApplyForce(b2Vec2(50, 0), bd->GetWorldCenter(), true);
 			bd->ApplyForceToCenter(force_dir * max_force, true);
 			// bd->ApplyLinearImpulse(force_dir * max_force, bd->GetWorldCenter(), true);
-			bd->ApplyTorque(float(i) / 1000, true);
+			// bd->ApplyTorque(float(i) / 1000, true);
 		}
+		// imshow("v_x_frame", v_x_frame);
+		// cout << mass_frame << endl;
 
 		// Set fps counter on image
 		t = ((double)getTickCount() - t) / getTickFrequency();
@@ -391,21 +414,73 @@ int main(int argc, char** argv) {
 		// Save and show individual images
 		int id = world.GetBodyCount();
 		for (b2Body* bd = world.GetBodyList(); bd; bd = bd->GetNext(), --id) {
-			// imshow(to_string(id) + " id", getBodyImage(bd->GetWorldCenter(), frame));
-			Mat small_bf_crop; // binary float crop
-			cropSmallBinaryFloatImage(bd, frame, small_bf_crop);
-			// TODO:: ADD to the custom data of the body
+			// Process data only on bodies that we have custom data for
 			BodyData* customdata = (BodyData*)bd->GetUserData();
 			if (customdata != nullptr) {
+				Mat small_bf_crop; // binary float crop
+				cropSmallBinaryFloatImage(bd, frame, small_bf_crop);
+				// cout << small_bf_crop << endl;
+				// TODO:: ADD to the custom data of the body
 				customdata->c_iter_mat_bin_world = small_bf_crop;
 				bd->SetUserData(customdata);
+				// imshow("small_around", small_bf_crop);
+				// imshow(to_string(id) + " id", small_bf_crop);
+
+				// Mat k = getBodyImage(bd->GetWorldCenter(), mass_frame);
+				// imshow(to_string(id) + " id", k);
+
+				vector<Mat> channels(ENUM_DATALAYERS_COUNT);
+				channels[DataLayers::world] = getBodyImage(bd->GetWorldCenter(), world_frame);
+				channels[DataLayers::obj] = customdata->c_binary_obj;
+				channels[DataLayers::mass] = getBodyImage(bd->GetWorldCenter(), mass_frame);
+				channels[DataLayers::restitution] = getBodyImage(bd->GetWorldCenter(),
+				                                                 restitution_frame);
+				channels[DataLayers::v_x] = getBodyImage(bd->GetWorldCenter(), v_x_frame);
+				channels[DataLayers::v_y] = getBodyImage(bd->GetWorldCenter(), v_y_frame);
+				channels[DataLayers::a_x] = getBodyImage(bd->GetWorldCenter(), a_x_frame);
+				channels[DataLayers::a_y] = getBodyImage(bd->GetWorldCenter(), a_y_frame);
+
+				Mat merged;
+				merge(channels, merged);
+
+				customdata->c_iter_mat = merged;
+
 			}
 		}
 
-		// TODO:: Publish any information here
+		// Save any information here
+		// The last images have led to the current position of object
+		for (b2Body* bd = world.GetBodyList(); bd; bd = bd->GetNext()) {
+			// Process data only on bodies that we have custom data for
+			BodyData* customdata = (BodyData*)bd->GetUserData();
+			if (customdata != nullptr) {
+				// Move iamges around
+				Mat data = customdata->last_iter_mat;
+				if (!data.empty()) {
+					// Save data
+					fs << "data_" + to_string(data_obj_id) << data;
+					fs << "delta_pos_" + to_string(data_obj_id) <<
+					   b2Vec22Vec2f(customdata->last_position - customdata->c_position);
+					fs << "delta_angle_" + to_string(data_obj_id) <<
+					   (customdata->last_angle - customdata->c_angle);
+					fs << "delta_a_" + to_string(data_obj_id) <<
+					   b2Vec22Vec2f(customdata->last_a - customdata->c_a);
+					fs << "delta_v_" + to_string(data_obj_id) <<
+					   b2Vec22Vec2f(customdata->last_v - customdata->c_v);
+					++data_obj_id;
+				}
 
-		// TODO:: Update current to last data
-
+				// Update current to last data
+				// Move images around
+				if (!customdata->c_iter_mat.empty()) {
+					customdata->last_iter_mat = customdata->c_iter_mat;
+					customdata->last_position = customdata->c_position;
+					customdata->last_angle = customdata->c_angle;
+					customdata->last_a = customdata->c_a;
+					customdata->last_v = customdata->c_v;
+				}
+			}
+		}
 
 		drawForceArrow(frame, force_dir);
 		imshow("Frame", frame);
@@ -431,9 +506,10 @@ int main(int argc, char** argv) {
 		}
 #endif
 		// Create a new body every so often
-		if (i % 1000 == 0 && i < 20000) createRandomBody(world, false);
+		if (i % (60 * 7) == 0 && i < 20000) createRandomBody(world, false);
 	}
 
+	fs.release();
 	// Clean the custom data? Pointers not removed
 	return 0;
 }
