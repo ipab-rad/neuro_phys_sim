@@ -1,14 +1,17 @@
 #include <Box2D/Box2D.h>
 #include <stdio.h>
 #include <opencv2/opencv.hpp>
+#include "numpy.hpp"
 
 // Rand
 #include <stdlib.h>     /* srand, rand */
 #include <time.h>       /* time */
 #include <cstdlib>
+#include <fstream>
 
 using namespace cv;
 using namespace std;
+using namespace aoba;
 
 typedef struct {
 	Mat c_iter_mat;
@@ -160,6 +163,11 @@ inline void cropSmallBinaryFloatImage(b2Body* bd,
 	small_crop.convertTo(binaryf_crop, CV_32FC1, 1.0 / 255.0);
 }
 
+fstream fileStream;
+void saveToFile(BodyData customdata) {
+
+}
+
 
 void createRandomBody(b2World& world, bool isBox = true) {
 	// Define the dynamic body. We set its position and call the body factory.
@@ -300,8 +308,11 @@ int main(int argc, char** argv) {
 	b2Vec2 force_dir; float max_force = 2000.0f;
 	force_dir.Set(0, 0);
 	unsigned long long data_obj_id = 0;
-	string filename = "sim_data.xml";
-	FileStorage fs(filename, FileStorage::WRITE);
+	string filename = "sim_data.data"; // .bin
+	fileStream.open(filename, ios::out);
+	// fileStream.open(filename, ios::out | ios::binary);
+	// FileStorage fs(filename, FileStorage::WRITE);
+
 	// fs.open(filename, FileStorage::READ);
 
 
@@ -457,16 +468,57 @@ int main(int argc, char** argv) {
 				// Move iamges around
 				Mat data = customdata->last_iter_mat;
 				if (!data.empty()) {
+					size_t floatcount = data.total() * data.channels();
+					size_t totalwritten = 0;
+					// cout << data.size() << floatcount << endl;
 					// Save data
-					fs << "data_" + to_string(data_obj_id) << data;
-					fs << "delta_pos_" + to_string(data_obj_id) <<
-					   b2Vec22Vec2f(customdata->last_position - customdata->c_position);
-					fs << "delta_angle_" + to_string(data_obj_id) <<
-					   (customdata->last_angle - customdata->c_angle);
-					fs << "delta_a_" + to_string(data_obj_id) <<
-					   b2Vec22Vec2f(customdata->last_a - customdata->c_a);
-					fs << "delta_v_" + to_string(data_obj_id) <<
-					   b2Vec22Vec2f(customdata->last_v - customdata->c_v);
+					// fs << "data_" + to_string(data_obj_id) << data;
+					// fs << "delta_pos_" + to_string(data_obj_id) <<
+					//    b2Vec22Vec2f(customdata->last_position - customdata->c_position);
+					// fs << "delta_angle_" + to_string(data_obj_id) <<
+					//    (customdata->last_angle - customdata->c_angle);
+					// fs << "delta_a_" + to_string(data_obj_id) <<
+					//    b2Vec22Vec2f(customdata->last_a - customdata->c_a);
+					// fs << "delta_v_" + to_string(data_obj_id) <<
+					//    b2Vec22Vec2f(customdata->last_v - customdata->c_v);
+					std::vector<float> resp;
+
+					// Image data
+					fileStream.write((char*)data.data, floatcount * sizeof(float));
+					totalwritten += floatcount * sizeof(float);
+					// Delta Position
+					b2Vec2 delta_pos = customdata->last_position - customdata->c_position;
+					resp.push_back(delta_pos.x);
+					resp.push_back(delta_pos.y);
+					fileStream.write((char*)&delta_pos, sizeof(b2Vec2));
+					totalwritten += sizeof(b2Vec2);
+					// Delta orientation
+					float delta_angle = customdata->last_angle - customdata->c_angle;
+					resp.push_back(delta_angle);
+					fileStream.write((char*)&delta_angle, sizeof(float));
+					totalwritten += sizeof(float);
+					// Delta a
+					b2Vec2 delta_a = customdata->last_a - customdata->c_a;
+					resp.push_back(delta_a.x);
+					resp.push_back(delta_a.y);
+					fileStream.write((char*)&delta_a, sizeof(b2Vec2));
+					totalwritten += sizeof(b2Vec2);
+					// Delta v
+					b2Vec2 delta_v = customdata->last_v - customdata->c_v;
+					resp.push_back(delta_v.x);
+					resp.push_back(delta_v.y);
+					fileStream.write((char*)&delta_v, sizeof(b2Vec2));
+					totalwritten += sizeof(b2Vec2);
+
+					float* dataptr = (float*) data.data;
+					SaveArrayAsNumpy("data/data_" + to_string(data_obj_id) + ".npy",
+					                 32, 32, 8, dataptr);
+					// float* respptr = resp;
+					SaveArrayAsNumpy("data/resp_" + to_string(data_obj_id) + ".npy",
+					                 resp.size(), &resp[0]);
+
+					cout << "ID:" << data_obj_id << " Total written: " << totalwritten << endl;
+
 					++data_obj_id;
 				}
 
@@ -509,7 +561,8 @@ int main(int argc, char** argv) {
 		if (i % (60 * 7) == 0 && i < 20000) createRandomBody(world, false);
 	}
 
-	fs.release();
+	// fs.release();
+	fileStream.close();
 	// Clean the custom data? Pointers not removed
 	return 0;
 }
