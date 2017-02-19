@@ -7,7 +7,10 @@
 #include <stdlib.h>     /* srand, rand */
 #include <time.h>       /* time */
 #include <cstdlib>
+#include <chrono>
+#include <thread>
 #include <fstream>
+#include <sys/stat.h>   /* stat */
 
 using namespace cv;
 using namespace std;
@@ -41,8 +44,6 @@ const int ENUM_DATALAYERS_COUNT = 8; // missing the angular vel and acc
 enum DataLayers {world, obj, mass, restitution, v_x, v_y, a_x, a_y};
 
 
-bool should_record = false;
-
 const int max_sides = 10;
 const int max_sides_point_spread = 5;
 const float scale = 4.0;
@@ -61,6 +62,12 @@ inline Point2f b2Vec22Point2f(const b2Vec2 v) {
 inline Vec2f b2Vec22Vec2f(const b2Vec2 v) {
 	return Vec2f(v.x, v.y);
 }
+
+inline bool exists_test(const std::string& name) {
+	struct stat buffer;
+	return (stat (name.c_str(), &buffer) == 0);
+}
+
 
 b2Vec2 simPosition2Draw(const b2Vec2 v, const Size& size = IMAGE_SIZE) {
 	b2Vec2 offset(size.width / 2.0, size.height * 0.9);
@@ -173,8 +180,8 @@ void createRandomBody(b2World& world, bool isBox = true) {
 	// Define the dynamic body. We set its position and call the body factory.
 	b2BodyDef bodyDef;
 	bodyDef.type = b2_dynamicBody;
-	float x = rand() % 32 - 16;
-	float y = rand() % 32 + 25;
+	float x = rand() % 40 - 20;
+	float y = rand() % 5 + 20;
 	bodyDef.position.Set(x, y);
 	b2Body* body = world.CreateBody(&bodyDef);
 
@@ -201,8 +208,10 @@ void createRandomBody(b2World& world, bool isBox = true) {
 						// if new hull was not better than the old, remove hte point
 						random_points.pop_back();
 					--attempts_left;
-					float xpos = float(rand()) / RAND_MAX * max_sides_point_spread;
-					float ypos = float(rand()) / RAND_MAX * max_sides_point_spread;
+					float xpos = float(rand()) / RAND_MAX * max_sides_point_spread -
+					             max_sides_point_spread / 2;
+					float ypos = float(rand()) / RAND_MAX * max_sides_point_spread -
+					             max_sides_point_spread / 2;
 					random_points.push_back(Point(xpos, ypos));
 					last_hull_size = hull.size(); // hull size without new point
 					convexHull(random_points, hull, true);
@@ -280,7 +289,14 @@ int main(int argc, char** argv) {
 	B2_NOT_USED(argc);
 	B2_NOT_USED(argv);
 	// srand(time(NULL));
-	srand(11);
+	int seed = 11;
+	if (argc == 2) {
+		seed = atoi(argv[1]);
+		cout << "Using seed: " << seed << endl;
+	} else {
+		cout << "Using default seed of " << seed << endl;
+	}
+	srand(seed);
 
 	// Define the gravity vector.
 	// b2Vec2 gravity(0.0f, -9.8f);
@@ -296,8 +312,10 @@ int main(int argc, char** argv) {
 	createGroundBox(world, 0.0f, 64.0f, 64, 1);
 
 	// col obj
-	createGroundBox(world, 10.0f, 15.0f, 0.5, 10, -3.14 / 6);
-	createGroundBox(world, -17.0f, 25.0f, 0.5, 10, 3.14 / 3);
+	createGroundBox(world, 10.0f, 6.0f, 0.5, 10, -3.14 / 6);
+	createGroundBox(world, -15.0f, 11.0f, 0.5, 10, 3.14 / 2.7);
+	createGroundBox(world, -1.0f, 16.0f, 0.5, 6, -3.14 / 2.5);
+	createGroundBox(world, 3.0f, 16.0f, 0.5, 6, 3.14 / 4);
 
 	createRandomBody(world);
 
@@ -310,11 +328,16 @@ int main(int argc, char** argv) {
 	unsigned long long data_obj_id = 0;
 	string filename = "sim_data.data"; // .bin
 	fileStream.open(filename, ios::out);
-	// fileStream.open(filename, ios::out | ios::binary);
-	// FileStorage fs(filename, FileStorage::WRITE);
 
-	// fs.open(filename, FileStorage::READ);
+	// Params
+	bool drawPredictions = false;
+	bool should_record = false;
+	// string data_dir = "data/";
+	string data_dir =
+	    "/media/daniel/8a78d15a-fb00-4b6e-9132-0464b3a45b8b/simdata2/";
 
+	Mat traj = Mat::ones(IMAGE_SIZE, CV_8UC3);
+	traj = CV_RGB(255, 255, 255);
 
 	// Video
 	VideoWriter outputVideo;	// Open the output
@@ -373,7 +396,10 @@ int main(int argc, char** argv) {
 			BodyData* customdata = (BodyData*)bd->GetUserData();
 			if (customdata != nullptr) {
 				b2Vec2 v = bd->GetLinearVelocity();
-				customdata->c_a = (v - customdata->last_v) / timeStep;
+				customdata->c_a = (customdata->last_v - v) / timeStep;
+				if (abs(customdata->c_a.x) > 25 || abs(customdata->c_a.y) > 25) {
+					cout << "GENERATED A HUGE ACCELERATION!!" << endl;
+				}
 				customdata->c_v = v;
 				customdata->c_position = bd->GetPosition();
 				customdata->c_angle = bd->GetAngle();
@@ -468,56 +494,89 @@ int main(int argc, char** argv) {
 				// Move iamges around
 				Mat data = customdata->last_iter_mat;
 				if (!data.empty()) {
-					size_t floatcount = data.total() * data.channels();
-					size_t totalwritten = 0;
-					// cout << data.size() << floatcount << endl;
-					// Save data
-					// fs << "data_" + to_string(data_obj_id) << data;
-					// fs << "delta_pos_" + to_string(data_obj_id) <<
-					//    b2Vec22Vec2f(customdata->last_position - customdata->c_position);
-					// fs << "delta_angle_" + to_string(data_obj_id) <<
-					//    (customdata->last_angle - customdata->c_angle);
-					// fs << "delta_a_" + to_string(data_obj_id) <<
-					//    b2Vec22Vec2f(customdata->last_a - customdata->c_a);
-					// fs << "delta_v_" + to_string(data_obj_id) <<
-					//    b2Vec22Vec2f(customdata->last_v - customdata->c_v);
+					// size_t floatcount = data.total() * data.channels();
+					// size_t totalwritten = 0;
 					std::vector<float> resp;
 
 					// Image data
-					fileStream.write((char*)data.data, floatcount * sizeof(float));
-					totalwritten += floatcount * sizeof(float);
+					float* dataptr = (float*) data.data;
+					// fileStream.write((char*)data.data, floatcount * sizeof(float));
+					// totalwritten += floatcount * sizeof(float);
 					// Delta Position
 					b2Vec2 delta_pos = customdata->last_position - customdata->c_position;
 					resp.push_back(delta_pos.x);
 					resp.push_back(delta_pos.y);
-					fileStream.write((char*)&delta_pos, sizeof(b2Vec2));
-					totalwritten += sizeof(b2Vec2);
+					// fileStream.write((char*)&delta_pos, sizeof(b2Vec2));
+					// totalwritten += sizeof(b2Vec2);
 					// Delta orientation
 					float delta_angle = customdata->last_angle - customdata->c_angle;
 					resp.push_back(delta_angle);
-					fileStream.write((char*)&delta_angle, sizeof(float));
-					totalwritten += sizeof(float);
-					// Delta a
-					b2Vec2 delta_a = customdata->last_a - customdata->c_a;
-					resp.push_back(delta_a.x);
-					resp.push_back(delta_a.y);
-					fileStream.write((char*)&delta_a, sizeof(b2Vec2));
-					totalwritten += sizeof(b2Vec2);
-					// Delta v
-					b2Vec2 delta_v = customdata->last_v - customdata->c_v;
-					resp.push_back(delta_v.x);
-					resp.push_back(delta_v.y);
-					fileStream.write((char*)&delta_v, sizeof(b2Vec2));
-					totalwritten += sizeof(b2Vec2);
+					// fileStream.write((char*)&delta_angle, sizeof(float));
+					// totalwritten += sizeof(float);
+					// acceleration
+					resp.push_back(customdata->c_a.x);
+					resp.push_back(customdata->c_a.y);
+					// fileStream.write((char*)&customdata->c_a, sizeof(b2Vec2));
+					// totalwritten += sizeof(b2Vec2);
+					// velocity
+					resp.push_back(customdata->c_v.x);
+					resp.push_back(customdata->c_v.y);
+					// fileStream.write((char*)&customdata->c_v, sizeof(b2Vec2));
+					// totalwritten += sizeof(b2Vec2);
 
-					float* dataptr = (float*) data.data;
-					SaveArrayAsNumpy("data/data_" + to_string(data_obj_id) + ".npy",
+					// If drawPredictions save to /datatest/ else /data/
+					SaveArrayAsNumpy(data_dir + "data_" + to_string(seed) + "_" +
+					                 to_string(data_obj_id) + ".npy",
 					                 32, 32, 8, dataptr);
-					// float* respptr = resp;
-					SaveArrayAsNumpy("data/resp_" + to_string(data_obj_id) + ".npy",
-					                 resp.size(), &resp[0]);
+					if (!drawPredictions) {
+						// float* respptr = resp;
+						SaveArrayAsNumpy(data_dir + "resp_"  + to_string(seed) + "_" +
+						                 to_string(data_obj_id) + ".npy",
+						                 resp.size(), &resp[0]);
+					}
 
-					cout << "ID:" << data_obj_id << " Total written: " << totalwritten << endl;
+					if (drawPredictions && i % 1 == 0) {
+						// Check if the network has executed the simulation
+						string filename = data_dir + "pred_" + to_string(seed) + "_"
+						                  + to_string(data_obj_id) + ".npy";
+						// Wait until file is created
+						std::chrono::milliseconds timespan(50); // or whatever
+						std::this_thread::sleep_for(timespan);
+						while (!exists_test(filename)) {
+							cout << " File still not created " << endl;
+							std::this_thread::sleep_for(timespan);
+							// usleep(100); // 100 ms
+						}
+						bool read_ok = false;
+						// Read in data
+						int rows, cols;
+						std::vector<double> pred_nn_data;
+						do {
+							try {
+								LoadArrayFromNumpy(filename, rows, cols, pred_nn_data);
+								read_ok = true;
+							} catch (const std::exception&) {
+								cout << "Some exception from not being able to open the file" << endl;
+								read_ok = false;
+							}
+						} while (!read_ok);
+						std::cout << rows << " " << cols << std::endl;
+						std::cout << pred_nn_data[0] << " " << pred_nn_data[1]  << std::endl;
+
+						// Draw v arrow	int len = 100;
+						Point st = b2Vec22Point2f(simPosition2Draw(customdata->c_position));
+						int len = 5;
+						Point dir1(st.x + pred_nn_data[0] * len,
+						           st.y - pred_nn_data[1] * len); // Gravity is along y
+						Point dir2(st.x + customdata->c_v.x * len,
+						           st.y - customdata->c_v.y * len); // Gravity is along y
+						arrowedLine(frame, st, dir1, CV_RGB(240, 10, 240), 1); // line
+						arrowedLine(frame, st, dir2, CV_RGB(10, 210, 0), 1); // line
+						arrowedLine(traj, st, dir1, CV_RGB(240, 10, 240), 1); // line
+						arrowedLine(traj, st, dir2, CV_RGB(10, 210, 0), 1); // line
+
+					}
+
 
 					++data_obj_id;
 				}
@@ -536,6 +595,7 @@ int main(int argc, char** argv) {
 
 		drawForceArrow(frame, force_dir);
 		imshow("Frame", frame);
+		imshow("Traj", traj);
 
 		if (should_record) outputVideo.write(frame);
 
