@@ -19,7 +19,8 @@ tf.python.control_flow_ops = tf
 
 import re
 import glob
-files =  glob.glob("../build/data/data*.npy")
+core_data_dir = '../build/data2'
+files =  glob.glob(core_data_dir + '/data*.npy')
 
 bigdata = []
 bigresp = []
@@ -29,8 +30,9 @@ thr = 9.81*5 # max g = 5g
 for f in files[:]:
     _, seed, id, _ = filter(None, re.split('[_.]', f))
     data = np.asarray(np.load(f))
-    resp = np.asarray(np.load('../build/data/resp_'+str(seed)+'_'+str(id)+'.npy'))
-    subsetresp = resp[3:5]
+    resp = np.asarray(np.load(core_data_dir + '/resp_' + str(seed) +
+                              '_' + str(id) + '.npy'))
+    subsetresp = resp[5:7]
     if (max(abs(subsetresp)) > thr):
         print('Tresholding to ' + str(thr) + '!')
         subsetresp = np.asarray(subsetresp)
@@ -66,21 +68,23 @@ unaltered_output = bigresp
 print('Min data (before): ' + str(np.min(bigresp, axis = 0)))
 print('Max data (before): ' + str(np.max(bigresp, axis = 0)))
 
-# normalize data to 0-1
-min_data1 = np.minimum(np.min(bigresp, axis = 0)*1.1, 0.1)
-bigresp = bigresp - min_data1
-print('Shifted lower bound by ' + str(min_data1))
-# data is already in range [0.1 - N)
-bigresp = np.log(bigresp) # take the log
-print('Min data (after log): ' + str(np.min(bigresp, axis = 0)))
-print('Max data (after log): ' + str(np.max(bigresp, axis = 0)))
+# # normalize data to 0-1
+# min_data1 = np.minimum(np.min(bigresp, axis = 0)*1.1, 0.1)
+# bigresp = bigresp - min_data1
+# print('Shifted lower bound by ' + str(min_data1))
+# # data is already in range [0.1 - N)
+# bigresp = np.log(bigresp) # take the log
+# print('Min data (after log): ' + str(np.min(bigresp, axis = 0)))
+# print('Max data (after log): ' + str(np.max(bigresp, axis = 0)))
 
 min_data2 = np.min(bigresp, axis = 0)
+np.save('models/min_data2full.npy', min_data2)
 bigresp = bigresp - min_data2
 # now data is in range [0, ...)
 print('Shifted lower bound by (after log): ' + str(min_data2))
 
 max_data = np.max(bigresp, axis=0)
+np.save('models/max_data2full.npy', max_data)
 print('Max data to norm dist ' + str(max_data))
 bigresp = bigresp / max_data
 # now data is in range [0 .. 1]
@@ -90,9 +94,11 @@ print('Max data:  ' + str(np.max(bigresp, axis = 0)))
 print('Mean data: ' + str(np.mean(bigresp, axis = 0)))
 
 # Shift input mean data
-# print('Mean input data: ' + str(np.mean(bigdata, axis = 0)))
-bigdata = bigdata - np.mean(bigdata, axis = 0)
-np.mean(bigdata, axis = 0).tofile('mean_data2full.dat')
+# print('Mean input data: ' + str(np.mean(bigdata, axis = 0).shape))
+inp_data_mean = np.mean(bigdata, axis = 0)
+bigdata = bigdata - inp_data_mean
+np.save('models/mean_input_data2full.npy', inp_data_mean)
+print('Mean Data shape: '  + str(inp_data_mean.flatten().shape))
 print('Input data shifted')
 
 print('Data loaded.')
@@ -125,7 +131,7 @@ print('Done shuffling.')
 # Generate model
 batch_size = 256*4
 # latent_dim = len(classes)
-nb_epoch = 50 #250*4
+nb_epoch = 250 #250*4
 # latent_dim = 64
 
 x_train = np.asarray(bigdata)
@@ -135,27 +141,11 @@ from keras import initializations
 def my_init(shape, name=None):
     return initializations.normal(shape, scale=0.01, name=name)
 
-def sampling(args):
-    z_mean, z_log_var = args
-    epsilon = K.random_normal(shape=(batch_size, latent_dim), mean=0.,
-                              std=epsilon_std)
-    return z_mean + K.exp(z_log_var / 2) * epsilon
+def output_of_lambda(input_shape):
+    return (input_shape[0], 1, input_shape[2])
 
 def create_model(weights_path=None):
     # with tf.device('/cpu:0'):
-    # inp = Input(batch_shape=(None, 32, 32, 1))
-    # x = Convolution2D(8, 3, 3, activation='relu', border_mode='same', init=my_init)(inp)
-    # x = Convolution2D(16, 8, 8, activation='relu', border_mode='same', init=my_init)(x)
-    # x = Convolution2D(32, 4, 4, activation='relu', border_mode='same', init=my_init)(x)
-    # # # model.add(Dropout(0.15))
-    # # # x = Dropout(0.25)(x)
-    # # # x = Dropout(0.25)(x)
-    # last_submodel = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x)
-    # # x = Flatten()(x)
-    # # last_submodel = Dense(178, activation='relu', init=my_init)(x)
-
-    # input_conv_model = Model(inp, last_submodel)
-    # input_conv_model.summary()
 
     obj_inp0 = Input(batch_shape=(None, 32, 32, 1), name='obj_world')
     x0 = Convolution2D(16, 3, 3, activation='relu', border_mode='same', init=my_init)(obj_inp0)
@@ -213,9 +203,9 @@ def create_model(weights_path=None):
     x4 = MaxPooling2D((2,2), strides=(2,2))(x4)
     x4 = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x4)
     x4 = MaxPooling2D((2,2), strides=(2,2))(x4)
-    # x4 = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x4)
-    # x4 = MaxPooling2D((2,2), strides=(2,2))(x4)
-    # conv_out4 = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x4)
+    x4 = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x4)
+    x4 = MaxPooling2D((2,2), strides=(2,2))(x4)
+    conv_out4 = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x4)
 
     obj_inp5 = Input(batch_shape=(None, 32, 32, 1), name='vel_y')
     x5 = Convolution2D(16, 3, 3, activation='relu', border_mode='same', init=my_init)(obj_inp5)
@@ -225,13 +215,13 @@ def create_model(weights_path=None):
     x5 = MaxPooling2D((2,2), strides=(2,2))(x5)
     x5 = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x5)
     x5 = MaxPooling2D((2,2), strides=(2,2))(x5)
-    # x5 = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x5)
-    # x5 = MaxPooling2D((2,2), strides=(2,2))(x5)
-    # conv_out5 = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x5)
-    v_merged = merge([x4, x5], mode='concat', concat_axis=1, name='vel_joint')
-    xv = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(v_merged)
-    xv = MaxPooling2D((2,2), strides=(2,2))(xv)
-    xv_out = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(xv)
+    x5 = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x5)
+    x5 = MaxPooling2D((2,2), strides=(2,2))(x5)
+    conv_out5 = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(x5)
+    # v_merged = merge([x4, x5], mode='concat', concat_axis=1, name='vel_joint')
+    # xv = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(v_merged)
+    # xv = MaxPooling2D((2,2), strides=(2,2))(xv)
+    # xv_out = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(xv)
 
 
     obj_inp6 = Input(batch_shape=(None, 32, 32, 1), name='acc_x')
@@ -263,7 +253,7 @@ def create_model(weights_path=None):
     xa_out = Convolution2D(32, 3, 3, activation='relu', border_mode='same', init=my_init)(xa)
 
     # Merge is for layers, merge is for tensors
-    concatenated = merge([conv_out0, conv_out1, conv_out2, conv_out3, xv_out, xa_out], mode='concat', concat_axis=1)
+    concatenated = merge([conv_out0, conv_out1, conv_out2, conv_out3, conv_out4, conv_out5, xa_out], mode='concat', concat_axis=1)
 
     o = Flatten()(concatenated)
     o1 = Dense(256*4, activation='relu', init=my_init)(o)
@@ -287,10 +277,10 @@ def create_model(weights_path=None):
 
 
  # or pass the h5 file for storing the model
-inps = create_model('inps2full.h5') # load the previously trained model
-inps.summary()
+inps = create_model() # load the previously trained model //'models/inps2full.h5'
+# inps.summary()
 from keras.utils.visualize_util import plot
-plot(inps, to_file='inps2merged.png', show_shapes=True)
+plot(inps, to_file='models/inps2full.png', show_shapes=True)
 
 # optimz = SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
 optimz = Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.01)
@@ -348,7 +338,7 @@ loss_and_metrics = inps.evaluate(conv_input_batch_to_model(x_train), y_unrolled_
 print('Total loss: ' + str(loss_and_metrics))
 
 # Saving it later
-# inps.save('inps.h5')  # creates a HDF5 file
+# inps.save('models/inps2full.h5')  # creates a HDF5 file
 # print('Saved model!')
 
 
@@ -371,7 +361,7 @@ print("First " + str(elem))
 pred = inps.predict(conv_input_batch_to_model(x_train[:elem]), batch_size=batch_size, verbose=1)
 
 pred = np.asarray(pred)
-pred_real = to_real_data(np.asarray(pred), log=True)
+pred_real = to_real_data(np.asarray(pred), log=False)
 y_unrolled_train = np.asarray(y_unrolled_train)
 
 
@@ -436,7 +426,7 @@ filename = "acc_hist_y.png"
 plt.savefig(filename)
 
 
-inps.save('inps2full.h5')  # creates a HDF5 file
+inps.save('models/inps2full.h5')  # creates a HDF5 file
 print('Saved model!')
 
 # fix error on garbage collection race condition
