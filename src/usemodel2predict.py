@@ -22,13 +22,18 @@ import re
 import glob
 # files =  glob.glob("../build/data/data*.npy")
 
+# datadir = '/media/daniel/8a78d15a-fb00-4b6e-9132-0464b3a45b8b/testdata'
+# datadir = 'datatest'
+datadir = 'datapred'
+
+modeldir = '../src/models/4'
 # bigdata = []
 # bigresp = []
 
 # Get params
-min_data2 = np.asarray([-6.64888525, -13.71338463])
-max_data = np.asarray([12.40662193, 19.73525047])
-mean_data = np.load('../src/models/mean_data2full.npy')
+min_data2 = np.load(modeldir + '/min_data2full.npy') #np.asarray([-6.64888525, -13.71338463])
+max_data = np.load(modeldir + '/max_data2full.npy') #np.asarray([12.40662193, 19.73525047])
+mean_data = np.load(modeldir + '/mean_input_data2full.npy')
 mean_data = mean_data.reshape((1, 32, 32, 8))
 print('Min data:  ' + str(min_data2))
 print('Max data:  ' + str(max_data))
@@ -189,10 +194,10 @@ def create_model(weights_path=None):
 
 
  # or pass the h5 file for storing the model
-inps = create_model('../src/models/inps2full_vxy.h5') # load the previously trained model
+inps = create_model(modeldir + '/inps2full.h5') # load the previously trained model
 # inps.summary()
-from keras.utils.visualize_util import plot
-plot(inps, to_file='inps2_vxy.png', show_shapes=True)
+# from keras.utils.visualize_util import plot
+# plot(inps, to_file='inps2_vxy.png', show_shapes=True)
 
 
 def conv_input_batch_to_model(data):
@@ -227,7 +232,7 @@ def to_real_data(data, log=False):
     return data
 
 def get_files():
-    return glob.glob("../build/datatest/data*.npy")
+    return glob.glob(datadir + '/data*.npy')
 
 old_files = []
 files = get_files()
@@ -259,7 +264,7 @@ while True:
     for f in new_files:
         # print(filter(None, re.split('[_.]', f)))
         _, seed, id, _ = filter(None, re.split('[_.]', f))
-        np.save('../build/datatest/pred_'+str(seed)+'_'+str(id)+'.npy',
+        np.save(datadir + '/pred_'+str(seed)+'_'+str(id)+'.npy',
             np.asarray([pred_real[0,i,:], pred_real[1,i,:]]))
         i += 1
 
