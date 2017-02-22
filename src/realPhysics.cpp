@@ -79,7 +79,22 @@ Mat getBodyImage(const b2Vec2 pos, const Mat& frame) {
 	int s = simDist2Draw(side);
 	Point p = b2Vec22Point2f(simPosition2Draw(pos));
 	Rect roi(p.x - s * 0.5, p.y - s * 0.5, s, s);
-	return frame(roi);
+	Rect intersect_roi = roi & cv::Rect(0, 0, frame.cols, frame.rows);
+	if (intersect_roi == roi) {
+		return frame(roi);
+	} else {
+		Mat n = Mat::zeros(Size(s, s), frame.type());
+		Mat crop = frame(intersect_roi);
+		// Draw what's left in the centre
+		intersect_roi.x = (s - intersect_roi.width) / 2;
+		intersect_roi.y = (s - intersect_roi.height) / 2;;
+		cv::Mat destinationROI = n(intersect_roi);
+		crop.copyTo(destinationROI);
+		cout << "BODY IS OUT OF THE IMAGE. " <<
+		     "This means too large velocity/ position has been given." <<
+		     "Returning best estimate of possible view." << endl;
+		return n;
+	}
 }
 
 void drawCircle(b2Vec2 pos, float r, Mat& frame) {
@@ -103,8 +118,8 @@ void drawVec2Poly(vector<b2Vec2> vs, Mat& frame,
 	for (int i = 0; i < vs.size(); ++i) {
 		conv_points.push_back(b2Vec22Point2f(simPosition2Draw(vs[i], frame.size())));
 	}
-	Scalar colour = CV_RGB(128, 128,
-	                       128); // abs(float(rand()) / RAND_MAX - 0.1) * 0 +
+	Scalar colour = CV_RGB(128, 128, 128);
+	// abs(float(rand()) / RAND_MAX - 0.1) * 0 +
 	fillConvexPoly(frame, &conv_points[0], conv_points.size(), colour);
 
 
@@ -331,17 +346,15 @@ int main(int argc, char** argv) {
 		float32 timeStep = 1.0f / 60.0f;
 		int32 velocityIterations = 6;
 		int32 positionIterations = 2;
-		b2Vec2 force_dir; float max_force = 2000.0f;
-		force_dir.Set(0, 0);
+
 		unsigned long long data_obj_id = 0;
-		// string filename = "sim_data.data"; // .bin
-		// fileStream.open(filename, ios::out);
 
 		// Params
 		bool save_only_large_acc = false; double acc_thr = 5;
 		bool drawPredictions = true;
-		bool should_record_video = true;
 		bool use_prediction_velocity = true;
+
+		bool should_record_video = false;
 		// string data_dir = "data/";
 		// string data_dir = "/media/daniel/8a78d15a-fb00-4b6e-9132-0464b3a45b8b/simdata3/";
 		// string data_dir = "/home/daniel/code/neuro_phys_sim/build/datatest/";
@@ -412,7 +425,7 @@ int main(int argc, char** argv) {
 					b2Vec2 v = bd->GetLinearVelocity();
 					customdata->c_a = (customdata->last_v - v) / timeStep;
 					if (abs(customdata->c_a.x) > acc_thr || abs(customdata->c_a.y) > acc_thr) {
-						cout << "GENERATED A HUGE ACCELERATION!!" << endl;
+						cout << "Body has acceleration above threshold!" << endl;
 					}
 					customdata->c_v = v;
 					customdata->c_position = bd->GetPosition();
@@ -427,9 +440,11 @@ int main(int argc, char** argv) {
 					v_y_frame += body_imgb * customdata->last_v.y;
 					a_x_frame += body_imgb * customdata->last_a.x;
 					a_y_frame += body_imgb * customdata->last_a.y;
+
 					// Get needed data
 					Mat binaryf_crop;
 					cropSmallBinaryFloatImage(bd, body_only_frame, binaryf_crop);
+
 					customdata->c_binary_obj = binaryf_crop;
 					bd->SetUserData(customdata);
 				} else {
@@ -443,15 +458,7 @@ int main(int argc, char** argv) {
 					a_y_frame += body_imgb * 0;
 
 				}
-
-				// Apply a force
-				// bd->ApplyForce(b2Vec2(50, 0), bd->GetWorldCenter(), true);
-				bd->ApplyForceToCenter(force_dir * max_force, true);
-				// bd->ApplyLinearImpulse(force_dir * max_force, bd->GetWorldCenter(), true);
-				// bd->ApplyTorque(float(i) / 1000, true);
 			}
-			// imshow("v_x_frame", v_x_frame);
-			// cout << mass_frame << endl;
 
 			// Set fps counter on image
 			t = ((double)getTickCount() - t) / getTickFrequency();
@@ -470,8 +477,7 @@ int main(int argc, char** argv) {
 				if (customdata != nullptr) {
 					Mat small_bf_crop; // binary float crop
 					cropSmallBinaryFloatImage(bd, frame, small_bf_crop);
-					// cout << small_bf_crop << endl;
-					// TODO:: ADD to the custom data of the body
+
 					customdata->c_iter_mat_bin_world = small_bf_crop;
 					bd->SetUserData(customdata);
 					// imshow("small_around", small_bf_crop);
@@ -585,7 +591,7 @@ int main(int argc, char** argv) {
 							std::cout << pred_nn_data[0] << " " << pred_nn_data[1]  << std::endl;
 
 							if (use_prediction_velocity) {
-								//Update body velocity
+								// Update body velocity
 								bd->SetLinearVelocity(b2Vec2(pred_nn_data[0], pred_nn_data[1]));
 								bd->SetTransform(bd->GetPosition() + b2Vec2(pred_nn_data[0],
 								                                            pred_nn_data[1]) * timeStep,
@@ -639,7 +645,6 @@ int main(int argc, char** argv) {
 							}
 						}
 
-
 						++data_obj_id;
 					}
 
@@ -659,7 +664,7 @@ int main(int argc, char** argv) {
 				imshow("Traj " + to_string(seed), traj);
 				imwrite("traj_seed" + to_string(seed) + ".png", traj);
 			}
-			drawForceArrow(frame, force_dir);
+			// drawForceArrow(frame, force_dir);
 			imshow("Frame (seed " + to_string(seed) + ")", frame);
 
 			if (should_record_video) outputVideo.write(frame);
@@ -673,22 +678,13 @@ int main(int argc, char** argv) {
 				imshow("Frame (seed " + to_string(seed) + ")", frame);
 				waitKey(0);
 			}
-#if 0
-			// Change the applied force every so often
-			if (i % 250 == 0) {
-				force_dir.Set((float(rand()) / RAND_MAX - 0.5),
-				              (float(rand()) / RAND_MAX - 0.5));
-				// force_dir.Set(1, 1);
-				// cout << "Force dir: " << force_dir.x << " " << force_dir.y << endl;
-			}
-#endif
+
 			// Create a new body every so often
-			if (i % (60 * 7) == 0 && i < 20000) createRandomBody(world, false);
+			if (i % (60 * 7) == 0) createRandomBody(world, false);
 		}
 		destroyAllWindows(); // clean up windows
 	}
-	// fs.release();
-	// fileStream.close();
+
 	// Clean the custom data? Pointers not removed
 	return 0;
 }
