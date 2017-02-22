@@ -18,17 +18,15 @@ import tensorflow as tf
 tf.python.control_flow_ops = tf
 # END fix
 
+import os
 import re
 import glob
-# files =  glob.glob("../build/data/data*.npy")
 
 # datadir = '/media/daniel/8a78d15a-fb00-4b6e-9132-0464b3a45b8b/testdata'
 # datadir = 'datatest'
 datadir = 'datapred'
 
 modeldir = '../src/models/4'
-# bigdata = []
-# bigresp = []
 
 # Get params
 min_data2 = np.load(modeldir + '/min_data2full.npy') #np.asarray([-6.64888525, -13.71338463])
@@ -38,24 +36,12 @@ mean_data = mean_data.reshape((1, 32, 32, 8))
 print('Min data:  ' + str(min_data2))
 print('Max data:  ' + str(max_data))
 print('Mean data:  ' + str(mean_data.shape))
-# print('Mean data:  ' + str(mean_data))
-
-# Shift input mean data
-# print('Mean input data: ' + str(np.mean(bigdata, axis = 0)))
-# np.mean(bigdata, axis = 0).tofile('mean_data2full.dat')
-# print('Input data shifted')
 
 print('Data loaded.')
 
 # Generate model
 batch_size = 256*4
-# latent_dim = len(classes)
-# nb_epoch = 250 #250*4
-# latent_dim = 64
 
-
-# x_train = np.asarray(bigdata)
-# y_train = np.asarray(bigresp)
 
 from keras import initializations
 def my_init(shape, name=None):
@@ -184,7 +170,6 @@ def create_model(weights_path=None):
         model = Model([obj_inp0, obj_inp1, obj_inp2, obj_inp3,
                        obj_inp4, obj_inp5, obj_inp6, obj_inp7], [out1, out2])
 
-
     if weights_path:
         with tf.device('/cpu:0'):
             model.load_weights(weights_path)
@@ -192,12 +177,7 @@ def create_model(weights_path=None):
 
     return model
 
-
- # or pass the h5 file for storing the model
 inps = create_model(modeldir + '/inps2full.h5') # load the previously trained model
-# inps.summary()
-# from keras.utils.visualize_util import plot
-# plot(inps, to_file='inps2_vxy.png', show_shapes=True)
 
 
 def conv_input_batch_to_model(data):
@@ -209,15 +189,6 @@ def conv_input_batch_to_model(data):
             np.expand_dims(data[:,:,:,5], axis=3),
             np.expand_dims(data[:,:,:,6], axis=3),
             np.expand_dims(data[:,:,:,7], axis=3)]
-
-# def conv_output_batch_to_model(data):
-#     return [data[:,0],
-#             data[:,1]]
-
-
-# x_unrolled_train = conv_input_batch_to_model(x_train)
-# y_unrolled_train = conv_output_batch_to_model(y_train)
-
 
 # Convert elements back to the original space
 def to_real_data(data, log=False):
@@ -248,9 +219,18 @@ while True:
     # Now we have new files
     new_files = set(files) - set(old_files)
     print('New files: ' + str(new_files))
+    if (len(new_files) <= 0): # In case fiels get deleted
+        old_files = files
+        continue
     # Read files and remove the mean
     bigdata = []
     for f in new_files:
+        # Check until file is the right size
+        statinfo = os.stat(f)
+        while statinfo.st_size < 32768:
+            print('Waiting until the whole file is written.')
+            t.sleep(0.01)
+
         data = np.asarray(np.load(f))
         bigdata.append(data)
 
@@ -271,55 +251,7 @@ while True:
     old_files = files
     print('Done')
 
-
-# elem = 1
-# print("Evaluating " + str(elem))
-# pred = inps.predict(conv_input_batch_to_model(x_train[:elem]), batch_size=batch_size, verbose=1)
-
-# pred = np.asarray(pred)
-# pred_real = to_real_data(np.asarray(pred), log=False)
-# y_unrolled_train = np.asarray(y_unrolled_train)
-
-
-# Check accuracy of to from conversion!
-# q1 = to_real_acc(np.asarray(y_train))
-# q2 = np.asarray(unaltered_output)
-# print(q2.shape)
-# print(q1)
-# print(q2)
-# print(np.sum((q1 - q2)))
-
-
-# print(pred.shape)
-# print(pred_real.shape)
-# print(pred_real[0,:elem,:])
-# print(y_unrolled_train[0,:elem,:])
-# print(y_unrolled_train.shape)
-# print(y_unrolled_train)
-
-
-# print(pred_real[0,:elem,0])
-# print(q2[:elem,0])
-# print(pred_real[0,:elem,0] - q2[:elem,0])
-
-# print('---------------------------------------')
-# print('   Prediction \t Training \t Diff (y\'-y)')
-# print(np.concatenate((pred[0,:,:], y_unrolled_train[0,:elem,:], (pred[0,:,:] - y_unrolled_train[0,:elem,:])), axis=1))
-# # print(np.concatenate((pred_real[0,:], y_unrolled_train[0,:elem], (pred_real[0,:]- y_unrolled_train[0,:elem])), axis=1))
-# print('---------------------------------------')
-# print(' real numbers: ')
-# table = np.concatenate(([pred_real[0,:elem,0]], [q2[:elem,0]], [(pred_real[0,:elem,0] - q2[:elem,0])]), axis=0)
-# # table = np.concatenate((table, [pred_real[1,:elem,0]], [q2[:elem,1]], [(pred_real[1,:elem,0] - q2[:elem,1])]), axis=0)
-# print(table.transpose())
-# print('---------------------------------------')
-# print('---------------------------------------')
-# print('---------------------------------------')
-# print('Prediction \t Training \t Diff (y2\'-y2)')
-# print(np.concatenate((pred[1,:,:], y_unrolled_train[1,:elem,:], (pred[1,:,:] - y_unrolled_train[1,:elem,:])), axis=1))
-# print(' real numbers: ')
-# table = np.concatenate(([pred_real[1,:elem,0]], [q2[:elem,1]], [(pred_real[1,:elem,0] - q2[:elem,1])]), axis=0)
-# print(table.transpose())
-
+print('Processed everything!')
 
 # fix error on garbage collection race condition
 from keras import backend as K
