@@ -30,3 +30,15 @@
 
 # Directories
 /build/
+
+/data/
+
+/dist0/
+
+/images/
+
+/images_b/
+
+/list/
+
+*.pyc

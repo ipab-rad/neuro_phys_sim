@@ -400,7 +400,7 @@ def generateData(theta, sim_length_s=5):
     world, c = createWorld(theta)
     timeStep = 1.0 / 60
     vel_iters, pos_iters = 10, 10
-    writer = skvideo.io.FFmpegWriter("data.mp4", outputdict={
+    writer = skvideo.io.FFmpegWriter("/data/neuro_phys_sim/data/data.mp4", outputdict={
           '-vcodec': 'libx264', '-b': '300000000', '-r': '60'})
 
     data = {'cid':[], 'scrop': [], 'mass':[],
@@ -483,7 +483,7 @@ def simulateWithModel(theta, model_func, sim_length_s=5):
     world, c = createWorld(theta)
     timeStep = 1.0 / 60
     vel_iters, pos_iters = 10, 10
-    writer = skvideo.io.FFmpegWriter("model_eval.mp4", outputdict={
+    writer = skvideo.io.FFmpegWriter("/data/neuro_phys_sim/data/model_eval.mp4", outputdict={
           '-vcodec': 'libx264', '-b': '300000000', '-r': '60'})
 
     predicted_output = []
@@ -512,15 +512,15 @@ def simulateWithModel(theta, model_func, sim_length_s=5):
 
         # Get probability
         from numpy.linalg import inv
-        y = np.abs(np.matmul(inv(np.diag(old_variances)),
+        sprob = np.abs(np.matmul(inv(np.diag(old_variances)),
             np.asarray(getDeepConversion(delta_p - old_outputs))))
 
-        if (np.max(y) > 3):
+        print 'Sprob: ', sprob
+        if (np.max(sprob) > 3):
             # print 'FAR TOOO LARGE!! '
             pass
         else:
             print 'I\'m within bounds! @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@'
-        print 'Y: ', y
 
         if (b2Vec2Norm(delta_p - getList2b2Vec2(old_outputs)) / b2Vec2Norm(delta_p) > 0.1):
             impV = GetImpactV(world, c)
@@ -565,7 +565,7 @@ def updateArchive(archive, data, outdata):
     for k in ['px', 'py', 'angle', 'vx', 'vy', 'vangle']:
         noutdata = np.concatenate((noutdata, np.expand_dims(np.asarray(outdata[k]), axis=1)), axis=1)
 
-    with h5py.File(archive, 'a') as f:# Read/write if exists, create otherwise
+    with h5py.File(archive, 'a') as f: # Read/write if exists, create otherwise
         data_sh = (0, 7, CROP_SIZE, CROP_SIZE)
         if 'data' in f:
             data_sh = f['data'].shape
@@ -573,8 +573,6 @@ def updateArchive(archive, data, outdata):
         data_set = f.require_dataset('data', shape = data_sh,
             maxshape=(None, 7, CROP_SIZE, CROP_SIZE), dtype='float32',
             compression="gzip", compression_opts=9)
-        data_set.resize(data_set.shape[0] + data_length, axis=0)
-        data_set[-data_length:] = ndata
 
         outdata_sh = (0, 6)
         if 'outdata' in f:
@@ -583,6 +581,10 @@ def updateArchive(archive, data, outdata):
         outdata_set = f.require_dataset('outdata', shape = outdata_sh,
             maxshape=(None, 6), dtype='float32',
             compression="gzip", compression_opts=5)
+
+        # Update data at the same time
+        data_set.resize(data_set.shape[0] + data_length, axis=0)
+        data_set[-data_length:] = ndata
         outdata_set.resize(outdata_set.shape[0] + data_length, axis=0)
         outdata_set[-data_length:] = noutdata
 
@@ -594,28 +596,3 @@ def getDataFromArchive(filename, sample_from_data=False):
             return f['data'][:256*8], f['outdata'][:256*8]
         else:
             return f['data'][()], f['outdata'][()]
-
-# You can also work closer to the C++ Box2D library, not using the niceties
-# supplied by pybox2d. Creating a world and a few bodies becomes much more
-# verbose:
-'''
-    from Box2D import (b2BodyDef, b2FixtureDef)
-    # Construct a world object, which will hold and simulate the rigid bodies.
-    world = b2World(gravity=(0, -10), doSleep=True)
-
-    # Define the ground body.
-    groundBodyDef = b2BodyDef()
-    groundBodyDef.position = (0, -10)
-
-    # Make a body fitting this definition in the world.
-    groundBody = world.CreateBody(groundBodyDef)
-
-    # Create a big static box to represent the ground
-    groundBox = b2PolygonShape(box=(50, 10))
-
-    # And create a fixture definition to hold the shape
-    groundBoxFixture = b2FixtureDef(shape=groundBox)
-
-    # Add the ground shape to the ground body.
-    groundBody.CreateFixture(groundBoxFixture)
-'''

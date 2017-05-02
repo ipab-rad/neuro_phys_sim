@@ -17,17 +17,18 @@ def draw_histograms(normv, id=0):
     # Save to histogram
     plt.hist(normv, bins=50, facecolor='red')  # plt.hist passes it's arguments to np.histogram
     plt.title("Vel x histogram with 50 bins")
-    filename = "images/hist_" + str(id) + ".png"
+    filename = "/data/neuro_phys_sim/images/hist_" + str(id) + ".png"
     plt.xlim(xmax = 0.6, xmin = -0.6)
     plt.savefig(filename)
     plt.clf()
 
     plt.plot(sorted(normv))
     plt.title("Vel x sorted")
-    filename = "images/sorted_" + str(id) + ".png"
+    filename = "/data/neuro_phys_sim/images/sorted_" + str(id) + ".png"
     plt.ylim(ymax = 0.6, ymin = -0.6)
     plt.savefig(filename)
     plt.clf()
+    print 'Saved figures.'
 
 # find likelihood of the magnitutde of v
 def llh_data_np_nonnorm(data, mean, sigma):
@@ -56,18 +57,14 @@ def testE2Esim():
 testE2Esim()
 
 def th(x):
-    # return [x[2], x[3], x[4], x[6], x[7], x[5], x[0], x[1]]
-    # return [x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9]]
     return x
 
 def get_vel_LLH(x):
     _, _, vel, dist2obj, c_count, impV = sw.simulateWorld(th(x), sim_length_s=5)
-    # if c_count == 0:
-    #     return -np.inf
     normv = np.linalg.norm(vel, axis = 1)
     # print impV
     impVnorm = np.linalg.norm(impV, axis = 1)
-     # target v
+    # target v
     # return llh_data_np_nonnorm(normv, target_mu, target_sigma) + \
     #        llh_data_np_nonnorm(dist2obj, 0, target_sigma) + \
     #        llh_data_np_nonnorm(impV[:,0], 1, target_sigma) + \
@@ -102,7 +99,6 @@ def create_urandom_sample():
     return new_sample
 
 def generate_sample_prop(old_sample):
-    # print
     new_sample = old_sample + \
         np.concatenate([np.random.normal(0, 1, 2),
                     np.random.normal(0, 0.5, 2),
@@ -176,9 +172,6 @@ if __name__ == "__main__":
         # _, _, vel, _, _, _ = sw.simulateWorld(th(samples[-1]), saveVideo=True, filename="best.mp4")
         # sw.simulateWorld(th(samples[5000]), saveVideo=True, filename="after_burn.mp4")
 
-        # normv = np.linalg.norm(vel, axis = 1)
-        # draw_histograms(normv, "best")
-
         # Save videos
         print 'different samples len ', len(diff_samples)
         id=0
@@ -186,14 +179,14 @@ if __name__ == "__main__":
             # _, _, vel, _, _, _ = sw.simulateWorld(th(s), saveVideo=True, filename="list/after_burn"+str(i)+"_"+str(id)+".mp4")
             data, outdata = sw.generateData(th(samples[-1]))
             # import cv2
-            # cv2.imwrite("data/cid.png", np.asarray(data['cid'][-1]*255))
-            # cv2.imwrite("data/scrop.png", np.asarray(data['scrop'][-1]*255))
-            # cv2.imwrite("data/mass.png", np.asarray(data['mass'][-1]*255))
-            # cv2.imwrite("data/velx.png", np.asarray(data['velx'][-1]*255))
-            # cv2.imwrite("data/vely.png", np.asarray(data['vely'][-1]*255))
-            # cv2.imwrite("data/avel.png", np.asarray(data['avel'][-1]*255))
-            # cv2.imwrite("data/rest.png", np.asarray(data['rest'][-1]*255))
-            size, _ = sw.updateArchive('data/data.hdf5', data, outdata)
+            # cv2.imwrite("/data/neuro_phys_sim/data/cid.png", np.asarray(data['cid'][-1]*255))
+            # cv2.imwrite("/data/neuro_phys_sim/data/scrop.png", np.asarray(data['scrop'][-1]*255))
+            # cv2.imwrite("/data/neuro_phys_sim/data/mass.png", np.asarray(data['mass'][-1]*255))
+            # cv2.imwrite("/data/neuro_phys_sim/data/velx.png", np.asarray(data['velx'][-1]*255))
+            # cv2.imwrite("/data/neuro_phys_sim/data/vely.png", np.asarray(data['vely'][-1]*255))
+            # cv2.imwrite("/data/neuro_phys_sim/data/avel.png", np.asarray(data['avel'][-1]*255))
+            # cv2.imwrite("/data/neuro_phys_sim/data/rest.png", np.asarray(data['rest'][-1]*255))
+            size, _ = sw.updateArchive('/data/neuro_phys_sim/data/data.hdf5', data, outdata)
             id += 1
             if (id > 10):
                 break
