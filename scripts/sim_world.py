@@ -22,7 +22,8 @@ import matplotlib.pyplot as plt
 cmap = cm.get_cmap('Spectral')
 
 PPM = 10.0  # pixels per meter
-SCREEN_WIDTH, SCREEN_HEIGHT = 256, 256
+COMPENSATION_PANEL = 20
+SCREEN_WIDTH, SCREEN_HEIGHT = 256 + COMPENSATION_PANEL, 256 + COMPENSATION_PANEL
 SCREEN_OFFSETX, SCREEN_OFFSETY = SCREEN_WIDTH/2, SCREEN_HEIGHT
 BACKGROUND_COLOUR = 255
 FOREGROUND_COLOUR = 1
@@ -350,6 +351,11 @@ def extractCrops(world, c):
     canvas = np.zeros((SCREEN_HEIGHT, SCREEN_WIDTH), np.uint8)
     c.fixtures[0].shape.draw(canvas, c)
     v = engine2canvas_vertices([c.worldCenter * PPM])[0]
+    # Check image boundaries
+    if (v[1] - CROP_H_SIZE < 0) or (v[1] + CROP_H_SIZE > SCREEN_HEIGHT) or \
+       (v[0] - CROP_H_SIZE < 0) or (v[0] + CROP_H_SIZE > SCREEN_WIDTH):
+        print 'Outside image boundaries!'
+
     id_crop = canvas[v[1] - CROP_H_SIZE:v[1] + CROP_H_SIZE,
                      v[0] - CROP_H_SIZE:v[0] + CROP_H_SIZE]
     id_crop[id_crop != 0] = FOREGROUND_COLOUR
@@ -375,7 +381,6 @@ def extractCrops(world, c):
             full_canvas['rest'] += canvas * fixture.restitution
                 # print np.dstack((np.dstack((canvas, canvas)), canvas)).shape
                 # print write_full_canvas.shape
-
 
     # print crop.shape
     data.append(id_crop)

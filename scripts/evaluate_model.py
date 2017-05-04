@@ -55,8 +55,9 @@ def retrain_network_with_new_samples(model, extra_crops,
                                             extra_outs,
                                             X, Y):
     size, _ = sw.updateArchiveDirectly('/data/neuro_phys_sim/data/extra_data.hdf5', extra_crops, extra_outs)
-    if (not X or not Y):
-        X, Y = sw.getDataFromArchive('/data/neuro_phys_sim/data/data.hdf5', sample_from_data=True)
+    if (len(X) == 0 or len(Y) == 0):
+        print 'Reading from dataset.'
+        X, Y = sw.getDataFromArchive('/data/neuro_phys_sim/data/data.hdf5', sample_from_data=False)
         extra_crops, extra_outs = sw.getDataFromArchive('/data/neuro_phys_sim/data/extra_data.hdf5')
 
     X = np.concatenate((X, extra_crops), axis=0)
@@ -87,135 +88,139 @@ def retrain_network_with_new_samples(model, extra_crops,
 X = np.empty(shape=(0, 7, 32, 32))
 Y = np.empty(shape=(0, 6))
 
-x_all = np.empty(shape=(0, 2))
-x_pred_all = np.empty(shape=(0, 2))
-sigma_prob_all = np.empty(shape=(0, 2))
 
-additional_training_crops = np.empty(shape=(0, 7, 32, 32))
-additional_training_outs = np.empty(shape=(0, 6))
+total_epochs = 100
+for epoch in xrange(total_epochs):
+    x_all = np.empty(shape=(0, 2))
+    x_pred_all = np.empty(shape=(0, 2))
+    sigma_prob_all = np.empty(shape=(0, 2))
 
-for i in xrange(3):
-    samples, _ = mhmc(1, 1)
-    x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(samples[-1], data2model)
-    # print "Add new values len: ", len(crops)
-    x_all = np.concatenate((x_all, np.asarray(x)))
-    x_pred_all = np.concatenate((x_pred_all, np.asarray(x_pred)))
-    sigma_prob_all = np.concatenate((sigma_prob_all, np.asarray(sigma_prob)))
-    # print 'Before Addeed data shapes: ', additional_training_crops.shape, additional_training_outs.shape
-    additional_training_crops = np.concatenate((additional_training_crops, np.asarray(crops)), axis=0)
-    additional_training_outs = np.concatenate((additional_training_outs, np.asarray(outs)), axis=0)
-    # print 'Addeed data shapes: ', additional_training_crops.shape, additional_training_outs.shape
+    additional_training_crops = np.empty(shape=(0, 7, 32, 32))
+    additional_training_outs = np.empty(shape=(0, 6))
 
-sigma_prob_all = np.asarray(sigma_prob_all)
-
-print x_all.shape
-print x_pred_all.shape
-
-print 'All delta x size: ', x_all.shape
-print 'All delta x prediction size: ', x_pred_all.shape
-print 'sigma_prob_all prediction size: ', sigma_prob_all.shape
-
-#temp fix things
-# sigma_prob_all[sigma_prob_all > 1e3] = 1e3
-
-
-draw_histograms(x_all[:,0], "eval_x")
-draw_histograms(x_pred_all[:,0], "eval_x_pred")
-draw_histograms(sigma_prob_all[:,0], "eval_sigma_prob", range=None)
-
-print('Processed everything!')
-
-# Format data
-x = x_all[:,0].reshape(-1, 1)
-y = x_pred_all[:,0].reshape(-1,)
-sigmas = sigma_prob_all[:,0].reshape(-1,)
-
-# Find mean stds of binned preductions
-bins, bin_size = np.linspace(np.min(x), np.max(x), num=50,
-                             endpoint=False, retstep=True)
-digitized = np.digitize(y, bins)
-bin_sep = [sigmas[digitized == i] for i in range(0, len(bins))]
-bin_means = [bin.mean() if not bin.size == 0 else 0 for bin in bin_sep]
-
-# Draw histogram of std
-draw_sigma(bin_means, bin_sep, bins)
-
-# Sample most uncertain locations in log space
-log_mean = np.log(bin_means)
-log_mean = np.asarray([m if np.isfinite(m) else 0 for m in log_mean])
-csum = np.cumsum(log_mean)
-
-samples_from_histogram = 10
-samples_from_fitted_world = 10
-for x in xrange(samples_from_histogram):
-    draw = np.random.uniform(low=0.0, high=csum[-1])
-    # print 'Draw: ', draw
-    idxs = csum > draw
-    # print 'Idxs ', idxs
-
-    idx = next((i for i in enumerate(csum) if i[1] > draw), None)[0]
-    # print idx, csum[idx]
-    print 'Uncertainty mean:', bin_means[idx]
-    print 'Bins: ', bins[idx], bins[idx]+bin_size
-    bin_center = bins[idx] + bin_size/2.0
-
-
-    _, diff_samples = s.mhmc(10, prop_sigma=1, llh_func=get_x_pos_LLH)
-    # print 'diff_samples ', len(diff_samples)
-
-    for i in xrange(min(len(diff_samples), samples_from_fitted_world)):
-        x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(
-                                                diff_samples[-1], data2model,
-                                                threshold_sigma=0.5)
-        additional_training_crops = np.concatenate((additional_training_crops , np.asarray(crops)))
-        additional_training_outs = np.concatenate((additional_training_outs , np.asarray(outs)))
+    for i in xrange(3):
+        samples, _ = mhmc(1, 1)
+        x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(samples[-1], data2model)
+        # print "Add new values len: ", len(crops)
+        x_all = np.concatenate((x_all, np.asarray(x)))
+        x_pred_all = np.concatenate((x_pred_all, np.asarray(x_pred)))
+        sigma_prob_all = np.concatenate((sigma_prob_all, np.asarray(sigma_prob)))
+        # print 'Before Addeed data shapes: ', additional_training_crops.shape, additional_training_outs.shape
+        additional_training_crops = np.concatenate((additional_training_crops, np.asarray(crops)), axis=0)
+        additional_training_outs = np.concatenate((additional_training_outs, np.asarray(outs)), axis=0)
         # print 'Addeed data shapes: ', additional_training_crops.shape, additional_training_outs.shape
-        print 'Extra data ', len(crops)
 
-    additional_training_crops = np.asarray(additional_training_crops)
-    additional_training_outs = np.asarray(additional_training_outs)
+    sigma_prob_all = np.asarray(sigma_prob_all)
 
-print 'Total Extra Data ', additional_training_crops.shape, additional_training_outs.shape
-inps, X, Y = retrain_network_with_new_samples(inps, additional_training_crops,
-                                            additional_training_outs, X, Y)
+    print x_all.shape
+    print x_pred_all.shape
+
+    print 'All delta x size: ', x_all.shape
+    print 'All delta x prediction size: ', x_pred_all.shape
+    print 'sigma_prob_all prediction size: ', sigma_prob_all.shape
+
+    #temp fix things
+    # sigma_prob_all[sigma_prob_all > 1e3] = 1e3
 
 
-print X.shape
+    draw_histograms(x_all[:,0], "eval_x")
+    draw_histograms(x_pred_all[:,0], "eval_x_pred")
+    draw_histograms(sigma_prob_all[:,0], "eval_sigma_prob", range=None)
+
+    print('Processed everything!')
+
+    # Format data
+    x = x_all[:,0].reshape(-1, 1)
+    y = x_pred_all[:,0].reshape(-1,)
+    sigmas = sigma_prob_all[:,0].reshape(-1,)
+
+    # Find mean stds of binned preductions
+    bins, bin_size = np.linspace(np.min(x), np.max(x), num=50,
+                                 endpoint=False, retstep=True)
+    digitized = np.digitize(y, bins)
+    bin_sep = [sigmas[digitized == i] for i in range(0, len(bins))]
+    bin_means = [bin.mean() if not bin.size == 0 else 0 for bin in bin_sep]
+
+    # Draw histogram of std
+    draw_sigma(bin_means, bin_sep, bins)
+
+    # Sample most uncertain locations in log space
+    log_mean = np.log(bin_means)
+    log_mean = np.asarray([m if np.isfinite(m) else 0 for m in log_mean])
+    csum = np.cumsum(log_mean)
+
+    samples_from_histogram = 10
+    samples_from_fitted_world = 10
+    for x in xrange(samples_from_histogram):
+        draw = np.random.uniform(low=0.0, high=csum[-1])
+        # print 'Draw: ', draw
+        idxs = csum > draw
+        # print 'Idxs ', idxs
+
+        idx = next((i for i in enumerate(csum) if i[1] > draw), None)[0]
+        # print idx, csum[idx]
+        print 'Uncertainty mean:', bin_means[idx]
+        print 'Bins: ', bins[idx], bins[idx]+bin_size
+        bin_center = bins[idx] + bin_size/2.0
 
 
-# =======
-print 'Checking improvements'
-x_all = np.empty(shape=(0, 2))
-x_pred_all = np.empty(shape=(0, 2))
-sigma_prob_all = np.empty(shape=(0, 2))
-x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(samples[-1], data2model)
-print "Add new values len: ", len(crops)
-x_all = np.concatenate((x_all, np.asarray(x)))
-x_pred_all = np.concatenate((x_pred_all, np.asarray(x_pred)))
-sigma_prob_all = np.concatenate((sigma_prob_all, np.asarray(sigma_prob)))
+        _, diff_samples = s.mhmc(1000, prop_sigma=1, llh_func=get_x_pos_LLH)
+        # print 'diff_samples ', len(diff_samples)
 
-draw_histograms(x_all[:,0], "updated_eval_x")
-draw_histograms(x_pred_all[:,0], "updated_eval_x_pred")
-draw_histograms(sigma_prob_all[:,0], "updated_eval_sigma_prob", range=None)
+        for i in xrange(min(len(diff_samples), samples_from_fitted_world)):
+            x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(
+                                                    diff_samples[-1], data2model,
+                                                    threshold_sigma=0.5)
+            additional_training_crops = np.concatenate((additional_training_crops , np.asarray(crops)))
+            additional_training_outs = np.concatenate((additional_training_outs , np.asarray(outs)))
+            # print 'Addeed data shapes: ', additional_training_crops.shape, additional_training_outs.shape
+            print 'Extra data ', len(crops)
 
-x = x_all[:,0].reshape(-1, 1)
-y = x_pred_all[:,0].reshape(-1,)
-sigmas = sigma_prob_all[:,0].reshape(-1,)
+        additional_training_crops = np.asarray(additional_training_crops)
+        additional_training_outs = np.asarray(additional_training_outs)
 
-# Find mean stds of binned preductions
-bins, bin_size = np.linspace(np.min(x), np.max(x), num=50,
-                             endpoint=False, retstep=True)
-digitized = np.digitize(y, bins)
-bin_sep = [sigmas[digitized == i] for i in range(0, len(bins))]
-bin_means = [bin.mean() if not bin.size == 0 else 0 for bin in bin_sep]
+    print 'Total Extra Data ', additional_training_crops.shape, additional_training_outs.shape
+    inps, X, Y = retrain_network_with_new_samples(inps, additional_training_crops,
+                                                additional_training_outs, X, Y)
 
-# Draw histogram of std
-draw_sigma(bin_means, bin_sep, bins)
+
+    print 'Total training data now is: ', X.shape
+
+
+# # =======
+# print 'Checking improvements'
+# x_all = np.empty(shape=(0, 2))
+# x_pred_all = np.empty(shape=(0, 2))
+# sigma_prob_all = np.empty(shape=(0, 2))
+# x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(samples[-1], data2model)
+# print "Add new values len: ", len(crops)
+# x_all = np.concatenate((x_all, np.asarray(x)))
+# x_pred_all = np.concatenate((x_pred_all, np.asarray(x_pred)))
+# sigma_prob_all = np.concatenate((sigma_prob_all, np.asarray(sigma_prob)))
+
+# draw_histograms(x_all[:,0], "updated_eval_x")
+# draw_histograms(x_pred_all[:,0], "updated_eval_x_pred")
+# draw_histograms(sigma_prob_all[:,0], "updated_eval_sigma_prob", range=None)
+
+# x = x_all[:,0].reshape(-1, 1)
+# y = x_pred_all[:,0].reshape(-1,)
+# sigmas = sigma_prob_all[:,0].reshape(-1,)
+
+# # Find mean stds of binned preductions
+# bins, bin_size = np.linspace(np.min(x), np.max(x), num=50,
+#                              endpoint=False, retstep=True)
+# digitized = np.digitize(y, bins)
+# bin_sep = [sigmas[digitized == i] for i in range(0, len(bins))]
+# bin_means = [bin.mean() if not bin.size == 0 else 0 for bin in bin_sep]
+
+# # Draw histogram of std
+# draw_sigma(bin_means, bin_sep, bins)
 
 # Saving model
-inps.save('/data/neuro_phys_sim/data/model_refited.h5')  # creates a HDF5 file
-print('Saved model!')
+    inps.save('/data/neuro_phys_sim/data/model_refited.h5')  # creates a HDF5 file
+    print('Saved model!')
 
+print 'Done'
 # ############## USELESS GPs
 
 # # Fit GP
