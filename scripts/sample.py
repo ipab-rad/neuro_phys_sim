@@ -13,19 +13,21 @@ from pymc3 import Model, Normal, HalfNormal, Slice
 from pymc3 import summary
 from pymc3 import traceplot
 
-def draw_histograms(normv, id=0):
+def draw_histograms(normv, id=0, range=0.6):
     # Save to histogram
     plt.hist(normv, bins=50, facecolor='red')  # plt.hist passes it's arguments to np.histogram
-    plt.title("Vel x histogram with 50 bins")
+    plt.title("x histogram with 50 bins")
     filename = "/data/neuro_phys_sim/images/hist_" + str(id) + ".png"
-    plt.xlim(xmax = 0.6, xmin = -0.6)
+    if (range):
+        plt.xlim(xmax = range, xmin = -range)
     plt.savefig(filename)
     plt.clf()
 
     plt.plot(sorted(normv))
-    plt.title("Vel x sorted")
+    plt.title("x sorted")
     filename = "/data/neuro_phys_sim/images/sorted_" + str(id) + ".png"
-    plt.ylim(ymax = 0.6, ymin = -0.6)
+    if (range):
+        plt.ylim(ymax = range, ymin = -range)
     plt.savefig(filename)
     plt.clf()
     print 'Saved figures.'
@@ -86,12 +88,12 @@ def create_urandom_sample():
     new_sample = np.zeros(12)
     new_sample[0] = np.random.uniform( -100, 100) # Impulse x
     new_sample[1] = np.random.uniform( -100, 100) # Impulse y
-    new_sample[2] = np.random.uniform( -12, 12)   # paddle pos x
+    new_sample[2] = np.random.uniform( -11, 11)   # paddle pos x
     new_sample[3] = np.random.uniform(   2, 13)   # paddle pos y
     new_sample[4] = np.random.uniform(-np.pi, np.pi) # paddle angle
     new_sample[5] = np.random.uniform(-np.pi, np.pi) # object angle
     new_sample[6] = np.random.uniform( .1, .90)  # object restitution
-    new_sample[7] = np.random.uniform( -12, 12)   # obj x
+    new_sample[7] = np.random.uniform( -11, 11)   # obj x
     new_sample[8] = np.random.uniform(   2, 13)   # obj y
     new_sample[9] = np.random.uniform( 0.5, 2.5)  # obj density
     new_sample[10] = np.random.uniform( .1, .90)  # parent object restitution
@@ -112,12 +114,12 @@ def generate_sample_prop(old_sample):
     # Apply constraints
     new_sample[0] = apply_range(new_sample[0], -100, 100)
     new_sample[1] = apply_range(new_sample[1], -100, 100)
-    new_sample[2] = apply_range(new_sample[2], -12, 12)
+    new_sample[2] = apply_range(new_sample[2], -11, 11)
     new_sample[3] = apply_range(new_sample[3],  2, 13)
     new_sample[4] = apply_range(new_sample[4],-np.pi, np.pi)
     new_sample[5] = apply_range(new_sample[5],-np.pi, np.pi)
     new_sample[6] = apply_range(new_sample[6], .1, .90)
-    new_sample[7] = apply_range(new_sample[7], -12, 12)
+    new_sample[7] = apply_range(new_sample[7], -11, 11)
     new_sample[8] = apply_range(new_sample[8],  2, 13)
     new_sample[9] = apply_range(new_sample[9], 0.5, 2.5)
     new_sample[10] = apply_range(new_sample[10], .1, .90)
@@ -127,20 +129,20 @@ def generate_sample_prop(old_sample):
 target_mu = 2
 target_sigma = 1
 
-def mhmc(n, prop_sigma=1):
+def mhmc(n, prop_sigma=1, llh_func=get_vel_LLH):
     # x = generate_sample_prop(np.zeros(10))
     x = create_urandom_sample()
     samples = np.zeros((n, len(x)))
     diff_samples = []
     # print x
 
-    llh_old = get_vel_LLH(x)
+    llh_old = llh_func(x)
     accepted_count = 0
 
     for i in xrange(n):
         x_new = generate_sample_prop(x)#x + np.random.randn(10) * prop_sigma
         # x_new = create_urandom_sample()
-        llh_new = get_vel_LLH(x_new)
+        llh_new = llh_func(x_new)
 
         if (i%50 == 0):
             print i, '/', n
@@ -162,9 +164,9 @@ def mhmc(n, prop_sigma=1):
 if __name__ == "__main__":
     # samples, _ = mhmc(200, 1)
     # sw.simulateWorld(th(samples[-1]), saveVideo=True, filename="best.mp4")
-    # print 'done'
+    # print 'done'; exit(0)
 
-    for i in range(200):
+    for i in range(300):
         print '-----------------------------'
         samples, diff_samples = mhmc(50, 1)
         print 'Done sampling ', i
@@ -173,7 +175,9 @@ if __name__ == "__main__":
         # sw.simulateWorld(th(samples[5000]), saveVideo=True, filename="after_burn.mp4")
 
         # Save videos
-        print 'different samples len ', len(diff_samples)
+        print 'Different samples len ', len(diff_samples)
+        if len(diff_samples) == 0:
+            continue
         id=0
         for s in reversed(diff_samples): # get best 10 samples
             # _, _, vel, _, _, _ = sw.simulateWorld(th(s), saveVideo=True, filename="list/after_burn"+str(i)+"_"+str(id)+".mp4")

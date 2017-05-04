@@ -479,7 +479,7 @@ def generateData(theta, sim_length_s=5):
     writer.close()
     return data, outdata
 
-def simulateWithModel(theta, model_func, sim_length_s=5):
+def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=3.0):
     world, c = createWorld(theta)
     timeStep = 1.0 / 60
     vel_iters, pos_iters = 10, 10
@@ -488,6 +488,7 @@ def simulateWithModel(theta, model_func, sim_length_s=5):
 
     predicted_output = []
     real_output = []
+    sigma_prob = []
 
     wrong_pred_crops = []
     wrong_pred_output = []
@@ -496,6 +497,7 @@ def simulateWithModel(theta, model_func, sim_length_s=5):
     old_variances = [1e-5, 1e-5]
     old_pos = c.worldCenter
     old_angle = c.angle
+    old_crops = []
     for i in range(60 * sim_length_s + 1): # To allow datasize to be exactly 60*s
         world.Step(timeStep, vel_iters, pos_iters)
         isWorldStatic = checkIfWorldStatic(world)
@@ -514,22 +516,23 @@ def simulateWithModel(theta, model_func, sim_length_s=5):
         from numpy.linalg import inv
         sprob = np.abs(np.matmul(inv(np.diag(old_variances)),
             np.asarray(getDeepConversion(delta_p - old_outputs))))
-
-        print 'Sprob: ', sprob
-        if (np.max(sprob) > 3):
+        sigma_prob.append(sprob)
+        # print 'Sprob: ', sprob
+        if (np.max(sprob) > threshold_sigma):
             # print 'FAR TOOO LARGE!! '
-            pass
+            # Get wrong samples for new training data!
+            if (old_crops):
+                wrong_pred_crops.append(old_crops)
+                wrong_pred_output.append([delta_p.x, delta_p.y, old_angle - c.angle,
+                         c.linearVelocity.x, c.linearVelocity.y, c.angularVelocity])
         else:
-            print 'I\'m within bounds! @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@'
+            print 'I\'m within bounds! ', sprob
 
         if (b2Vec2Norm(delta_p - getList2b2Vec2(old_outputs)) / b2Vec2Norm(delta_p) > 0.1):
             impV = GetImpactV(world, c)
             # print 'Impact velocity ', impV
             # print 'THINGS @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@'
             ## Get object data
-            wrong_pred_crops.append(crops)
-            wrong_pred_output.append([delta_p.x, delta_p.y, old_angle - c.angle,
-                     c.linearVelocity.x, c.linearVelocity.y, c.angularVelocity])
             ##
 
         # Store outputs
@@ -545,26 +548,18 @@ def simulateWithModel(theta, model_func, sim_length_s=5):
         old_variances = new_variances
         old_pos = getList2b2Vec2(c.worldCenter)
         old_angle = c.angle
+        old_crops = crops
         # Stop if world is no longer moving
         if (isWorldStatic):
             print 'World is static, stopping at ', i
             break
     writer.close()
     real_output = [[x[0], x[1]] for x in real_output]
-    return real_output, predicted_output, wrong_pred_crops, wrong_pred_output
+    return real_output, predicted_output, sigma_prob, wrong_pred_crops, wrong_pred_output
 
-def updateArchive(archive, data, outdata):
-    # print 'TO TEST and create a unit test'
-    data_length = len(data['cid'])
-
-    ndata = np.empty(shape=(data_length, 0, CROP_SIZE, CROP_SIZE), dtype='float32')
-    for k in ['cid', 'scrop', 'mass', 'velx', 'vely', 'avel', 'rest']:
-        ndata = np.concatenate((ndata, np.expand_dims(np.asarray(data[k]), axis=1)), axis=1)
-
-    noutdata = np.empty(shape=(data_length, 0), dtype='float32')
-    for k in ['px', 'py', 'angle', 'vx', 'vy', 'vangle']:
-        noutdata = np.concatenate((noutdata, np.expand_dims(np.asarray(outdata[k]), axis=1)), axis=1)
-
+def updateArchiveDirectly(archive, data, outdata):
+    data_length = len(data)
+    print 'updateArchiveDirectly ', len(data), len(outdata), data_length
     with h5py.File(archive, 'a') as f: # Read/write if exists, create otherwise
         data_sh = (0, 7, CROP_SIZE, CROP_SIZE)
         if 'data' in f:
@@ -584,11 +579,26 @@ def updateArchive(archive, data, outdata):
 
         # Update data at the same time
         data_set.resize(data_set.shape[0] + data_length, axis=0)
-        data_set[-data_length:] = ndata
+        data_set[-data_length:] = data
         outdata_set.resize(outdata_set.shape[0] + data_length, axis=0)
-        outdata_set[-data_length:] = noutdata
+        outdata_set[-data_length:] = outdata
 
         return data_set.shape[0], outdata_set.shape[0]
+
+def updateArchive(archive, data, outdata):
+    # print 'TO TEST and create a unit test'
+    data_length = len(data['cid'])
+
+    ndata = np.empty(shape=(data_length, 0, CROP_SIZE, CROP_SIZE), dtype='float32')
+    for k in ['cid', 'scrop', 'mass', 'velx', 'vely', 'avel', 'rest']:
+        ndata = np.concatenate((ndata, np.expand_dims(np.asarray(data[k]), axis=1)), axis=1)
+
+    noutdata = np.empty(shape=(data_length, 0), dtype='float32')
+    for k in ['px', 'py', 'angle', 'vx', 'vy', 'vangle']:
+        noutdata = np.concatenate((noutdata, np.expand_dims(np.asarray(outdata[k]), axis=1)), axis=1)
+
+    return updateArchiveDirectly(archive, ndata, noutdata)
+
 
 def getDataFromArchive(filename, sample_from_data=False):
     with h5py.File(filename, 'a') as f:
