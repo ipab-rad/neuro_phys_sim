@@ -111,20 +111,20 @@ def createBaseWorld():
     data = {"colour": [169, 169, 169]}
     data.update({"colour_border": [128, 128, 128]})
     data.update({"border_thickness": 1})
-    groundBody = world.CreateStaticBody(position=(0, -1),
-                                        shapes=b2PolygonShape(box=(13, 2)), # half sizes
+    groundBody = world.CreateStaticBody(position=(0, -0.5),
+                                        shapes=b2PolygonShape(box=(14, 2)), # half sizes
                                         angle=0.0,
                                         userData=data)
     groundBody2 = world.CreateStaticBody(position=(SCREEN_OFFSETX/PPM, SCREEN_OFFSETY/PPM/2.0),
-                                        shapes=b2PolygonShape(box=(1, 13)), # half sizes
+                                        shapes=b2PolygonShape(box=(2, 14)), # half sizes
                                         angle=0,
                                         userData=data)
     groundBody3 = world.CreateStaticBody(position=(-SCREEN_OFFSETX/PPM, SCREEN_OFFSETY/PPM/2.0),
-                                        shapes=b2PolygonShape(box=(1, 13)), # half sizes
+                                        shapes=b2PolygonShape(box=(2, 14)), # half sizes
                                         angle=0,
                                         userData=data)
     groundBody4 = world.CreateStaticBody(position=(0, SCREEN_OFFSETY/PPM),
-                                        shapes=b2PolygonShape(box=(13, 1)), # half sizes
+                                        shapes=b2PolygonShape(box=(14, 2)), # half sizes
                                         angle=0.0,
                                         userData=data)
     return world
@@ -355,6 +355,8 @@ def extractCrops(world, c):
     if (v[1] - CROP_H_SIZE < 0) or (v[1] + CROP_H_SIZE > SCREEN_HEIGHT) or \
        (v[0] - CROP_H_SIZE < 0) or (v[0] + CROP_H_SIZE > SCREEN_WIDTH):
         print 'Outside image boundaries!'
+        print 'Body at: ', c.worldCenter
+        return []
 
     id_crop = canvas[v[1] - CROP_H_SIZE:v[1] + CROP_H_SIZE,
                      v[0] - CROP_H_SIZE:v[0] + CROP_H_SIZE]
@@ -420,6 +422,9 @@ def generateData(theta, sim_length_s=5):
         isWorldStatic = checkIfWorldStatic(world)
 
         crops = extractCrops(world, c)
+        if len(crops) == 0:
+            print 'Skipping due to body being out or range'
+            continue
         # print crop.shape
         data['cid'].append(crops[0])
         data['scrop'].append(crops[1])
@@ -508,6 +513,9 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=3.0):
         isWorldStatic = checkIfWorldStatic(world)
 
         crops = extractCrops(world, c)
+        if len(crops) == 0:
+            print 'Skipping due to body being out or range'
+            continue
         ncrops = [np.asarray(crops[ci]).reshape(1, 32, 32, 1) for ci in xrange(len(crops))]
 
         new_outputs, new_variances = model_func(ncrops)
@@ -530,7 +538,7 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=3.0):
                 wrong_pred_crops.append(old_crops)
                 wrong_pred_output.append([delta_p.x, delta_p.y, old_angle - c.angle,
                          c.linearVelocity.x, c.linearVelocity.y, c.angularVelocity])
-        else:
+        elif (i > 0):
             print 'I\'m within bounds! ', sprob
 
         if (b2Vec2Norm(delta_p - getList2b2Vec2(old_outputs)) / b2Vec2Norm(delta_p) > 0.1):
@@ -554,18 +562,21 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=3.0):
         old_pos = getList2b2Vec2(c.worldCenter)
         old_angle = c.angle
         old_crops = crops
+
         # Stop if world is no longer moving
         if (isWorldStatic):
             print 'World is static, stopping at ', i
             break
+            
     writer.close()
     real_output = [[x[0], x[1]] for x in real_output]
     return real_output, predicted_output, sigma_prob, wrong_pred_crops, wrong_pred_output
 
 def updateArchiveDirectly(archive, data, outdata):
     data_length = len(data)
-    print 'updateArchiveDirectly ', len(data), len(outdata), data_length
+    print 'updateArchiveDirectly size:', len(data), len(outdata)
     with h5py.File(archive, 'a') as f: # Read/write if exists, create otherwise
+        # Get correct expected sizes
         data_sh = (0, 7, CROP_SIZE, CROP_SIZE)
         if 'data' in f:
             data_sh = f['data'].shape

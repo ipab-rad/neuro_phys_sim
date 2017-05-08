@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 # Load models
 inps, m2 = mc.create_model('/data/neuro_phys_sim/data/model.h5')
 
-def draw_sigma(bin_means, bin_sep, bins):
+def draw_binned_sigma(bin_means, bin_sep, bins, id=""):
     bins_arrx = []
     bins_arry = []
     for bv, b in zip(bin_sep, bins):
@@ -27,14 +27,22 @@ def draw_sigma(bin_means, bin_sep, bins):
                 bins_arry.append(np.log(v))
 
     color = np.asarray([item < 3 for item in bin_means], dtype='uint8')*0.7+0.2
-    plt.plot(bins_arrx, bins_arry, 'r.', zorder=1)
-    plt.scatter(bins, np.log(bin_means), c=color, s=10, cmap='winter', zorder=10)
-    plt.axhline(y = np.log(3), color='g', zorder=11)
-    plt.title("Histogram of log mean std.")
+    plt.plot(bins_arrx, bins_arry, 'r.', zorder=1, label='Standard deviations')
+    plt.scatter(bins, np.log(bin_means), c=color, s=10, cmap='winter', zorder=10, label=u'Mean std per bin')
+    plt.axhline(y = np.log(3), color='g', zorder=11, label=u'3 std')
+    print 'bin_means different from 0 - find log: ', bin_means[bin_means != 0]
+    # print np.trim_zeros(bin_means)
+    log_m = np.log(bin_means[bin_means != 0]).mean()
+    plt.axhline(y = log_m, color='c', zorder=10, label=u'mean log std ('+"{:.2f}".format(log_m)+')')
+    plt.title('Histogram of log mean std.')
     plt.xlim(-0.6, 0.6)
-    filename = "/data/neuro_phys_sim/images/mean_hist.png"
+    plt.xlabel('delta x')
+    plt.ylabel('log std')
+    plt.legend(loc='upper left')
+    filename = "/data/neuro_phys_sim/images/mean_hist_"+str(epoch)+".png"
     plt.savefig(filename)
     plt.clf()
+    print 'Saved figure - ', filename
 
 def data2model(data):
     # model_out =  mc.pred_model(inps, data)
@@ -54,21 +62,24 @@ def get_x_pos_LLH(w):
 def retrain_network_with_new_samples(model, extra_crops,
                                             extra_outs,
                                             X, Y):
+    print 'Updating extra archive'
     size, _ = sw.updateArchiveDirectly('/data/neuro_phys_sim/data/extra_data.hdf5', extra_crops, extra_outs)
     if (len(X) == 0 or len(Y) == 0):
         print 'Reading from dataset.'
-        X, Y = sw.getDataFromArchive('/data/neuro_phys_sim/data/data.hdf5', sample_from_data=False)
+        X, Y = sw.getDataFromArchive('/data/neuro_phys_sim/data/data_300.hdf5', sample_from_data=False)
         extra_crops, extra_outs = sw.getDataFromArchive('/data/neuro_phys_sim/data/extra_data.hdf5')
 
     X = np.concatenate((X, extra_crops), axis=0)
     Y = np.concatenate((Y, extra_outs), axis=0)
+
+    print 'Total training data: ', X.shape
 
     Xc = mc.conv_input_batch_to_model(X)
     Yc = mc.conv_output_batch_to_model(Y)
 
     # Generate model
     batch_size = 256*8
-    nb_epoch = 30
+    nb_epoch = 10
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.75, verbose=1,
                                   patience=5, cooldown=10, min_lr=0.000001)
     optimz = Adamax(lr=1e-5, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
@@ -91,6 +102,9 @@ Y = np.empty(shape=(0, 6))
 
 total_epochs = 100
 for epoch in xrange(total_epochs):
+    print '-----------'
+    print 'Lead epoch: ', epoch
+
     x_all = np.empty(shape=(0, 2))
     x_pred_all = np.empty(shape=(0, 2))
     sigma_prob_all = np.empty(shape=(0, 2))
@@ -112,20 +126,14 @@ for epoch in xrange(total_epochs):
 
     sigma_prob_all = np.asarray(sigma_prob_all)
 
-    print x_all.shape
-    print x_pred_all.shape
-
     print 'All delta x size: ', x_all.shape
     print 'All delta x prediction size: ', x_pred_all.shape
     print 'sigma_prob_all prediction size: ', sigma_prob_all.shape
 
-    #temp fix things
-    # sigma_prob_all[sigma_prob_all > 1e3] = 1e3
-
-
-    draw_histograms(x_all[:,0], "eval_x")
-    draw_histograms(x_pred_all[:,0], "eval_x_pred")
-    draw_histograms(sigma_prob_all[:,0], "eval_sigma_prob", range=None)
+    # Draw data
+    draw_histograms(x_all[:,0], "eval_x"+str(epoch))
+    draw_histograms(x_pred_all[:,0], "eval_x_pred"+str(epoch))
+    # draw_histograms(sigma_prob_all[:,0], "eval_sigma_prob_"+str(epoch), range=None)
 
     print('Processed everything!')
 
@@ -142,7 +150,7 @@ for epoch in xrange(total_epochs):
     bin_means = [bin.mean() if not bin.size == 0 else 0 for bin in bin_sep]
 
     # Draw histogram of std
-    draw_sigma(bin_means, bin_sep, bins)
+    draw_binned_sigma(bin_means, bin_sep, bins, epoch)
 
     # Sample most uncertain locations in log space
     log_mean = np.log(bin_means)
@@ -167,9 +175,9 @@ for epoch in xrange(total_epochs):
         _, diff_samples = s.mhmc(1000, prop_sigma=1, llh_func=get_x_pos_LLH)
         # print 'diff_samples ', len(diff_samples)
 
-        for i in xrange(min(len(diff_samples), samples_from_fitted_world)):
+        for i in xrange(1, min(len(diff_samples), samples_from_fitted_world) + 1):
             x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(
-                                                    diff_samples[-1], data2model,
+                                                    diff_samples[-i], data2model, # TODO: Check if i is the correct size if samples_from_fitted_world is used
                                                     threshold_sigma=0.5)
             additional_training_crops = np.concatenate((additional_training_crops , np.asarray(crops)))
             additional_training_outs = np.concatenate((additional_training_outs , np.asarray(outs)))
@@ -186,6 +194,9 @@ for epoch in xrange(total_epochs):
 
     print 'Total training data now is: ', X.shape
 
+    # Saving model
+    inps.save('/data/neuro_phys_sim/data/model_refited_' + str(epoch) + '.h5')  # creates a HDF5 file
+    print('Saved model!')
 
 # # =======
 # print 'Checking improvements'
@@ -214,11 +225,8 @@ for epoch in xrange(total_epochs):
 # bin_means = [bin.mean() if not bin.size == 0 else 0 for bin in bin_sep]
 
 # # Draw histogram of std
-# draw_sigma(bin_means, bin_sep, bins)
+# draw_binned_sigma(bin_means, bin_sep, bins)
 
-# Saving model
-    inps.save('/data/neuro_phys_sim/data/model_refited.h5')  # creates a HDF5 file
-    print('Saved model!')
 
 print 'Done'
 # ############## USELESS GPs
