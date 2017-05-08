@@ -8,15 +8,21 @@ from keras import backend as K
 import tensorflow as tf
 import numpy as np
 
+# Remove info warning level msgs from tf
+tf.logging.set_verbosity(tf.logging.ERROR) # for older versions
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL']='3'
+
 # device_instance = '/cpu:0'
 device_instance = '/gpu:1'
 
-
+# Change tf params
 from keras.backend.tensorflow_backend import set_session
 config = tf.ConfigProto()
 # config.gpu_options.per_process_gpu_memory_fraction = 0.8
 config.gpu_options.allow_growth = True
 set_session(tf.Session(config=config))
+# end params change
 
 output_size = 1
 
@@ -38,7 +44,7 @@ def create_model(weights_path=None):
             inpts.append(obj_inp)
             x0 = Conv2D(16, kernel_size=(3, 3), activation='relu', padding='same')(obj_inp)
             x0 = Conv2D(16, kernel_size=(3, 3), activation='relu', padding='same')(x0)
-            # x0 = Dropout(0.02)(x0)
+            x0 = Dropout(0.2)(x0)
             x0 = MaxPooling2D((2,2), strides=(2,2))(x0)
             x0 = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x0)
             x0 = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x0)

@@ -79,12 +79,12 @@ def retrain_network_with_new_samples(model, extra_crops,
 
     # Generate model
     batch_size = 256*8
-    nb_epoch = 10
+    nb_epoch = 30
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.75, verbose=1,
                                   patience=5, cooldown=10, min_lr=0.000001)
-    optimz = Adamax(lr=1e-5, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
+    # optimz = Adamax(lr=1e-5, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
 
-    inps.compile(optimizer=optimz, loss='mse')
+    inps.compile(optimizer='adam', loss='mse')
     # Full train
     hist = inps.fit(Xc, Yc,
         batch_size=batch_size,
