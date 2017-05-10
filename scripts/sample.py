@@ -7,11 +7,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import sim_world as sw
 
-from pymc3 import NUTS, sample
-from scipy import optimize
-from pymc3 import Model, Normal, HalfNormal, Slice
-from pymc3 import summary
-from pymc3 import traceplot
+import multiprocessing as mp
+import os, time
 
 def draw_histograms(normv, id=0, range=0.6, draw_sorted=False):
     # Save to histogram
@@ -89,6 +86,7 @@ def apply_range(value, vmin, vmax):
     return value
 
 def create_urandom_sample():
+    np.random.seed(os.getpid() + int(time.time()%1e3)) # Get new random seed
     new_sample = np.zeros(12)
     new_sample[0] = np.random.uniform( -100, 100) # Impulse x
     new_sample[1] = np.random.uniform( -100, 100) # Impulse y
@@ -166,7 +164,45 @@ def mhmc(n, prop_sigma=1, llh_func=get_vel_LLH):
     print 'accepted_count: ', accepted_count
     return samples, diff_samples
 
+def mhmc_log_result(list, max_elem, result):
+    _, diff_samples = result
+    get_elem = min(len(diff_samples), max_elem)
+    if get_elem:
+        list.append(np.asarray(diff_samples[-get_elem:]))
+
+def parallel_mhmc(s, n, p, prop_sigma=1, llh_func=get_vel_LLH):
+    '''
+    's' times, run an mhmc chain for 'n' steps and get the top 'p' different
+    results
+    '''
+    result_list = []
+    pool = mp.Pool()
+    for i in range(s):
+        pool.apply_async(mhmc,
+                         args = (n, prop_sigma, llh_func, ),
+                         callback = lambda x: mhmc_log_result(result_list, p, x))
+    pool.close()
+    pool.join()
+    result_list = np.asarray(result_list)
+
+    # Now compress list
+    samples = []
+    for c in result_list: # for each chain
+        for s in c: # for each sample in the chain return
+            samples.append(s)
+    samples = np.asarray(samples)
+
+    print 'Sample shape: ', samples.shape
+    return samples
+
 if __name__ == "__main__":
+
+    parallel_mhmc(100, 1000, 10)
+    exit(0)
+
+    # TODO: Make parallel generateData f()
+    # TODO: Make parallel simulateWithModel f()
+
     # samples, _ = mhmc(200, 1)
     # sw.simulateWorld(th(samples[-1]), saveVideo=True, filename="best.mp4")
     # print 'done'; exit(0)
