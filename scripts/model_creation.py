@@ -3,7 +3,10 @@ from keras.layers import Input, Lambda
 from keras.layers.merge import concatenate
 from keras.layers.core import Flatten, Dense, Dropout
 from keras.layers.convolutional import Conv2D, MaxPooling2D, ZeroPadding2D
+from keras import regularizers
 from keras import backend as K
+
+from keras.regularizers import l2
 
 import tensorflow as tf
 import numpy as np
@@ -12,6 +15,7 @@ import numpy as np
 tf.logging.set_verbosity(tf.logging.ERROR) # for older versions
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL']='3'
+# os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1' # speed up convolutions
 
 # device_instance = '/cpu:0'
 device_instance = '/gpu:1'
@@ -44,7 +48,7 @@ def create_model(weights_path=None):
             inpts.append(obj_inp)
             x0 = Conv2D(16, kernel_size=(3, 3), activation='relu', padding='same')(obj_inp)
             x0 = Conv2D(16, kernel_size=(3, 3), activation='relu', padding='same')(x0)
-            x0 = Dropout(0.2)(x0)
+            # x0 = Dropout(0.2)(x0)
             x0 = MaxPooling2D((2,2), strides=(2,2))(x0)
             x0 = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x0)
             x0 = Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x0)
@@ -58,10 +62,12 @@ def create_model(weights_path=None):
         concatenated = concatenate(outs, axis=1)
         o = Flatten()(concatenated)
 
-        o1 = Dense(256*4, activation='relu')(o)
-        o1 = Dense(256*2, activation='relu')(o1)
-        out1_mean = Dense(1, activation='linear', name='dx_mean')(o1)
+        lam = 1e-6 # was 3 below
+        o1 = Dense(256*4, activation='relu')(o) # kernel_initializer='random_uniform'
+        o1 = Dense(256*2, activation='relu')(o1) # kernel_initializer='random_uniform'
+        out1_mean = Dense(3, activation='linear', name='dx_mean', kernel_regularizer=regularizers.l2(lam))(o1) # W_regularizer=l2(lam)
         out1_var = Dense(1, activation='linear', name='dx_var')(o1)
+        out1_alpha = Dense(1, activation='softmax', name='dx_alpha')(o1)
         out1 = Lambda(sampling, output_shape=(output_size,), name='dx')([out1_mean, out1_var])
 
 
@@ -74,8 +80,10 @@ def create_model(weights_path=None):
     with tf.device(device_instance):
         model = Model(inpts, [out1, out2])
         # model = Model(inpts, [out1_mean, out2_mean])
-        # model = Model(inpts, out1)
-        m2 = Model(inpts, [out1_mean, out1_var, out2_mean, out2_var])
+        # model = Model(inpts, out1_mean)
+        # m2 = Model(inpts, [out1_mean, out1_var, out2_mean, out2_var])
+        # m2 = Model(inpts, out1_mean)
+        m2 = Model(inpts, out1_mean)
 
 
     if weights_path:
@@ -87,7 +95,8 @@ def create_model(weights_path=None):
 
 def plot_model(model):
     from keras.utils.vis_utils import plot_model
-    plot_model(model, to_file='inps2full.png', show_shapes=True, show_layer_names=False)
+    plot_model(model, to_file='/data/neuro_phys_sim/data/m2.png', show_shapes=True, show_layer_names=False)
+    print 'Saved model image at /data/neuro_phys_sim/data/m2.png'
 
 def pred_model(model, data):
     return model.predict(data)
@@ -108,26 +117,85 @@ def conv_output_batch_to_model(data):
     # return [data[:,3],
     #         data[:,4]] # for dx dy
 
-def likelihood_loss(y_true, y_pred):
-    print(y_true.get_shape())
-    out_size = y_true.get_shape().as_list()[1]
-    # YT1 = y_true[:,0]
-    # YT2 = y_true[:,1]
-    # YP1 = y_pred[:,0]
-    # YP2 = y_pred[:,1]
+def log_sum_exp(x, axis=None):
+    """Log-sum-exp trick implementation"""
+    x_max = K.max(x, axis=axis, keepdims=True)
+    return K.log(K.sum(K.exp(x - x_max),
+                       axis=axis, keepdims=True))+x_max
 
-    print K.shape(y_pred)
-    print '------'
+def mean_log_Gaussian_like(y_true, parameters):
+    """Mean Log Gaussian Likelihood distribution
+    Note: The 'c' variable is obtained as global variable
+    'c' - number of outputs
+    'm' - number of mixtures
+    """
+    c = 1
+    m = 1
+    components = K.reshape(parameters,[-1, c + 2, m])
+    y_true = K.reshape(y_true,[-1, c + 2, m])
+    mu = components[:, :c, :]
+    sigma = K.log(1 + K.exp(components[:, c, :]))
+    K.clip(sigma, 1e-6, 1e3)
+    alpha = components[:, c + 1, :]
+    alpha = K.softmax(K.clip(alpha,1e-6,1.))
+
+    exponent = K.log(alpha) - .5 * float(c) * K.log(2 * np.pi) \
+            - float(c) * K.log(sigma) \
+            - K.sum((y_true[:,:c,:] - mu)**2, axis=1)/(2*(sigma)**2)
+
+            #     exponent = K.log(alpha) - .5 * float(c) * K.log(2 * np.pi) \
+            # - float(c) * K.log(sigma) \
+            # - K.sum((K.expand_dims(y_true,2) - mu)**2, axis=1)/(2*(sigma)**2)
+
+    log_gauss = log_sum_exp(exponent, axis=1)
+    res = - K.mean(log_gauss)
+    return res
+
+def likelihood_loss(y_true, y_pred):
+    # a, b = y_true
+    # print a, b
+    # print 'testtttt', y_true.shape, y_pred.shape, y_pred[:,0].shape, y_pred[:,1].shape, y_pred[2].shape
+    # print 'Ytrue: ', y_true.get_shape(), K.shape(y_true)
+    # out_size = y_true.get_shape().as_list()
+    # print 'Some other method ', out_size, y_pred.get_shape().as_list()
+    # # print 'True mean shape: ', K.shape(y_true), K.shape(y_true[:,0]), K.shape(y_true[:,1])
+    mu_true = y_true[:,0]
+    # dummy_zero = y_true[:,0]
+    mu = y_pred[:,0]
+    # sigmas = K.exp(y_pred[:,1])
+    sigmas = K.log( 1 + K.exp(y_pred[:,1]))
+    K.clip(sigmas, 1e-6, 1e3)
+    # sigmas[sigmas < 1e-5]=1e-5 # clipping
+
+    # print 'K.shape(y_pred) - ', K.shape(y_pred)
+    # print '------'
     # print(YT1, YT2, YP1, YP2)
 
     # sample_prob
 
-    # print (K.mean(K.square(y_pred - y_true), axis=-1))
+    # print (K.mean(K.square(y_pred - mu_true), axis=-1))
 
     # return K.mean(K.square(YP1 - YT1), axis=-1) +
     #        K.mean(K.square(YP2 - YT2), axis=-1)
+    # o = -0.5 * K.log(K.square(sigmas)) - K.square(mu_true - mu) / (2.0 * K.square(sigmas))
+    # print 'output: ', K.shape(o), K.ndim(o), K.ndim(K.mean(K.square(y_pred - mu_true), axis=-1))
+    # return K.mean(K.square(y_pred - mu_true), axis=-1)
 
-    return K.mean(K.square(y_pred - y_true), axis=-1)
+    s = K.exp(K.square(mu_true - mu)/(2*K.square(sigmas))) / (2 * np.pi * K.square(sigmas))
+    s = K.maximum(s, 1e-20)
+    loss =  -K.log(s)
+    return loss
+    # print K.shape(loss)
+    # return K.maximum(loss, 1e-20)
+
+    # return -0.5 * K.log(sigmas**2) - K.square(mu - mu_true) / (2.0 * sigmas**2)
+
+    # z = ((mu_true - mu) / sigmas) ** 2 / -2.0
+    # normalizer = sigmas * 2 * np.pi
+    # z += - K.log(normalizer)
+    # # return K.maximum(z, 1e-20)
+    # return z
+
 
 def preprocess_data(data):
     print 'data.shape: ', data.shape
