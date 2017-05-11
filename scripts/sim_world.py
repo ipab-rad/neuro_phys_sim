@@ -567,7 +567,7 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=3.0):
         if (isWorldStatic):
             print 'World is static, stopping at ', i
             break
-            
+
     writer.close()
     real_output = [[x[0], x[1]] for x in real_output]
     return real_output, predicted_output, sigma_prob, wrong_pred_crops, wrong_pred_output
