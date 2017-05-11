@@ -4,7 +4,7 @@ from numpy.linalg import inv
 import sim_world as sw
 import model_creation as mc
 
-inps, m2 = mc.create_model('/data/neuro_phys_sim/data/modelu.h5')
+m2 = mc.create_model('/data/neuro_phys_sim/data/modelu2.h5')
 # inps, m2 = mc.create_model('/data/neuro_phys_sim/data/model_refited_10.h5')
 
 # Load data
@@ -27,7 +27,7 @@ print 'Network prediction done.'
 # print Yc_pred, Yc
 
 Yc = np.transpose(np.asarray(Yc))
-# Yc_pred = np.transpose(np.asarray(Yc_pred))[0]
+Yc_pred = np.transpose(np.asarray(Yc_pred))
 
 print Yc.shape
 print Yc_pred.shape
@@ -35,18 +35,19 @@ print Yc_pred.shape
 print 'Evaluating performance...'
 counter = [0, 0, 0, 0, 0]
 sum_prob = 0
-for y, y_pred in zip(Yc, Yc_pred):
+error = []
+for y, mu, s, a in zip(Yc[0], Yc_pred[0], Yc_pred[1], Yc_pred[2]):
     # print y_pred
     # print y
     # Get probability
     # mu = [y_pred[0], y_pred[2]]
     # s = [y_pred[1], y_pred[3]]
     # var = np.exp(np.asarray(s, dtype='float64').flatten()/2.0)
-    mu = [y_pred[0]]
-    s = [y_pred[1]]
+    # mu = [y_pred[0]]
+    # s = [y_pred[1]]
     var = np.log(1 + np.exp(s))
-    prob = np.abs(np.matmul(inv(np.diag(var)), np.asarray(y[0] - mu)))
-
+    prob = np.abs(np.matmul(inv(np.diag(var)), np.asarray(y - mu)))
+    error.append(np.asarray(y - mu))
     # print y, mu, var
     # print 'Prob: ', prob
     max_prob = np.max(prob)
@@ -56,7 +57,8 @@ for y, y_pred in zip(Yc, Yc_pred):
             # print 'Far too unprobable - ', prob
             counter[i] += 1
 
-print 'Above sigma threshold occurances \n[1s, 2s, 3s, ...]:\n', counter, ' / ', len(Yc), \
-      '\n', [float(c) / len(Yc) for c in counter], '\n'
-print 'Average sigma prob: ', max_prob / len(Yc)
+print 'Above sigma threshold occurances \n[1s, 2s, 3s, ...]:\n', counter, ' / ', len(Yc[0]), \
+      '\n', [float(c) / len(Yc[0]) for c in counter], '\n'
+print 'Average sigma prob: ', sum_prob / len(Yc[0])
+print 'MSE: ', np.square(np.asarray(error)).mean()
 print('Processing done!')

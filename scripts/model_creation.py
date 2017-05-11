@@ -62,41 +62,38 @@ def create_model(weights_path=None):
         concatenated = concatenate(outs, axis=1)
         o = Flatten()(concatenated)
 
-        lam = 1e-6 # was 3 below
+        lam = 1e-6
         o1 = Dense(256*4, activation='relu')(o) # kernel_initializer='random_uniform'
         o1 = Dense(256*2, activation='relu')(o1) # kernel_initializer='random_uniform'
-        out1_mean = Dense(3, activation='linear', name='dx_mean', kernel_regularizer=regularizers.l2(lam))(o1) # W_regularizer=l2(lam)
-        out1_var = Dense(1, activation='linear', name='dx_var')(o1)
-        out1_alpha = Dense(1, activation='softmax', name='dx_alpha')(o1)
-        out1 = Lambda(sampling, output_shape=(output_size,), name='dx')([out1_mean, out1_var])
+        out1_mean = Dense(3, activation='linear', name='dx', kernel_regularizer=regularizers.l2(lam))(o1) # W_regularizer=l2(lam)
+        # out1_var = Dense(1, activation='linear', name='dx_var')(o1)
+        # out1_alpha = Dense(1, activation='softmax', name='dx_alpha')(o1)
+        # out1 = Lambda(sampling, output_shape=(output_size,), name='dxo')([out1_mean, out1_var])
 
 
         o2 = Dense(256*4, activation='relu')(o)
         o2 = Dense(256*2, activation='relu')(o2)
-        out2_mean = Dense(1, activation='linear', name='dy_mean')(o2)
-        out2_var = Dense(1, activation='linear', name='dy_var')(o2)
-        out2 = Lambda(sampling, output_shape=(output_size,), name='dy')([out2_mean, out2_var])
+        out2_mean = Dense(3, activation='linear', name='dy', kernel_regularizer=regularizers.l2(lam))(o2)
+        # out2_var = Dense(1, activation='linear', name='dy_var')(o2)
+        # out2 = Lambda(sampling, output_shape=(output_size,), name='dyo')([out2_mean, out2_var])
 
     with tf.device(device_instance):
-        model = Model(inpts, [out1, out2])
+        model = Model(inpts, [out1_mean, out2_mean])
         # model = Model(inpts, [out1_mean, out2_mean])
-        # model = Model(inpts, out1_mean)
-        # m2 = Model(inpts, [out1_mean, out1_var, out2_mean, out2_var])
         # m2 = Model(inpts, out1_mean)
-        m2 = Model(inpts, out1_mean)
-
 
     if weights_path:
         with tf.device(device_instance):
             model.load_weights(weights_path)
             print('Loaded weights from ' + weights_path)
 
-    return model, m2
+    return model
 
 def plot_model(model):
+    filename = '/data/neuro_phys_sim/data/m2.png'
     from keras.utils.vis_utils import plot_model
-    plot_model(model, to_file='/data/neuro_phys_sim/data/m2.png', show_shapes=True, show_layer_names=False)
-    print 'Saved model image at /data/neuro_phys_sim/data/m2.png'
+    plot_model(model, to_file=filename, show_shapes=True, show_layer_names=False)
+    print 'Saved model image at ', filename
 
 def pred_model(model, data):
     return model.predict(data)
@@ -110,12 +107,14 @@ def conv_input_batch_to_model(data):
             np.expand_dims(data[:,5,:,:], axis=3),
             np.expand_dims(data[:,6,:,:], axis=3)]
 
-def conv_output_batch_to_model(data):
-    return [data[:,0],
-            data[:,1]] # for dx dy
-    # return data[:,0]
-    # return [data[:,3],
-    #         data[:,4]] # for dx dy
+def conv_output_batch_to_model(data, parts=2):
+    res = []
+    for i in xrange(parts): # add extra zero arrays for var and alpha
+        oval = np.asarray(data[:,i]).reshape(-1, 1)
+        Yi = np.zeros(shape=(oval.shape[0], oval.shape[1]*3), dtype=np.float32)
+        Yi[:oval.shape[0], :oval.shape[1]] = oval
+        res.append(Yi)
+    return res
 
 def log_sum_exp(x, axis=None):
     """Log-sum-exp trick implementation"""
@@ -143,130 +142,6 @@ def mean_log_Gaussian_like(y_true, parameters):
             - float(c) * K.log(sigma) \
             - K.sum((y_true[:,:c,:] - mu)**2, axis=1)/(2*(sigma)**2)
 
-            #     exponent = K.log(alpha) - .5 * float(c) * K.log(2 * np.pi) \
-            # - float(c) * K.log(sigma) \
-            # - K.sum((K.expand_dims(y_true,2) - mu)**2, axis=1)/(2*(sigma)**2)
-
     log_gauss = log_sum_exp(exponent, axis=1)
     res = - K.mean(log_gauss)
     return res
-
-def likelihood_loss(y_true, y_pred):
-    # a, b = y_true
-    # print a, b
-    # print 'testtttt', y_true.shape, y_pred.shape, y_pred[:,0].shape, y_pred[:,1].shape, y_pred[2].shape
-    # print 'Ytrue: ', y_true.get_shape(), K.shape(y_true)
-    # out_size = y_true.get_shape().as_list()
-    # print 'Some other method ', out_size, y_pred.get_shape().as_list()
-    # # print 'True mean shape: ', K.shape(y_true), K.shape(y_true[:,0]), K.shape(y_true[:,1])
-    mu_true = y_true[:,0]
-    # dummy_zero = y_true[:,0]
-    mu = y_pred[:,0]
-    # sigmas = K.exp(y_pred[:,1])
-    sigmas = K.log( 1 + K.exp(y_pred[:,1]))
-    K.clip(sigmas, 1e-6, 1e3)
-    # sigmas[sigmas < 1e-5]=1e-5 # clipping
-
-    # print 'K.shape(y_pred) - ', K.shape(y_pred)
-    # print '------'
-    # print(YT1, YT2, YP1, YP2)
-
-    # sample_prob
-
-    # print (K.mean(K.square(y_pred - mu_true), axis=-1))
-
-    # return K.mean(K.square(YP1 - YT1), axis=-1) +
-    #        K.mean(K.square(YP2 - YT2), axis=-1)
-    # o = -0.5 * K.log(K.square(sigmas)) - K.square(mu_true - mu) / (2.0 * K.square(sigmas))
-    # print 'output: ', K.shape(o), K.ndim(o), K.ndim(K.mean(K.square(y_pred - mu_true), axis=-1))
-    # return K.mean(K.square(y_pred - mu_true), axis=-1)
-
-    s = K.exp(K.square(mu_true - mu)/(2*K.square(sigmas))) / (2 * np.pi * K.square(sigmas))
-    s = K.maximum(s, 1e-20)
-    loss =  -K.log(s)
-    return loss
-    # print K.shape(loss)
-    # return K.maximum(loss, 1e-20)
-
-    # return -0.5 * K.log(sigmas**2) - K.square(mu - mu_true) / (2.0 * sigmas**2)
-
-    # z = ((mu_true - mu) / sigmas) ** 2 / -2.0
-    # normalizer = sigmas * 2 * np.pi
-    # z += - K.log(normalizer)
-    # # return K.maximum(z, 1e-20)
-    # return z
-
-
-def preprocess_data(data):
-    print 'data.shape: ', data.shape
-    data_mean = np.mean(data, axis = 0)
-    data = data - data_mean
-    np.save('data/mean_input.npy', data_mean)
-    print('Mean Data shape: '  + str(data_mean.shape))
-    # print data_mean[0]
-    # print data_mean[1]
-
-
-    import cv2
-    for i in range(7):
-        cv2.imwrite("verify"+str(i)+".png", data[0][i]*255)
-
-    for i in range(32):
-        print data[0][0][i]
-
-    print '------------------------------------------------------------'
-    for i in range(32):
-        print data_mean[0][i]
-
-    print('Input data shifted')
-
-    print (np.mean(data))
-
-    # from sklearn import preprocessing
-    # print data[0]
-    # print data[:,0].shape
-    # data = [preprocessing.scale(data[:,i]) for i in xrange(len(data))]
-    # print data
-    return data
-
-def preprocess_output(o):
-    print '-----'
-    print len(o)
-    print o[0].shape
-    print 'Values larger than 10: ', sum(i[0] > 10 for i in o)
-    print 'Values larger than 10: ', sum(i[1] > 10 for i in o)
-    print 'max: ', np.max(o)
-    print 'min: ', np.min(o)
-    print '-----'
-
-    for i in o:
-        if i[0] > 1.0:
-            i[0] = 1.0
-        elif i[0] < -1.0:
-            i[0] = -1.0
-
-        if i[1] > 1.0:
-            i[1] = 1.0
-        elif i[1] < -1.0:
-            i[1] = -1.0
-
-    print 'Values larger than 1: ', sum(i[0] >= 1 for i in o)
-    print 'Values larger than 1: ', sum(i[1] >= 1 for i in o)
-    print 'max: ', np.max(o)
-    print 'min: ', np.min(o)
-    print '-----'
-
-    # # from sklearn.preprocessing import MinMaxScaler
-    # # o = MinMaxScaler().fit_transform(o)
-
-    # min_data = np.min(o, axis = 0)
-    # np.save('data/min_outdata.npy', min_data)
-    # o = o - min_data
-    # # now data is in range [0, ...)
-    # # print('Shifted lower bound by (after log): ' + str(min_data))
-
-    # max_data = np.max(o, axis=0)
-    # np.save('data/max_outdata.npy', max_data)
-    # print('Max data to norm dist ' + str(max_data))
-    # o = o / max_data
-    return o
