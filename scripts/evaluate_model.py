@@ -15,9 +15,9 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 # Load models
-inps, m2 = mc.create_model('/data/neuro_phys_sim/data/model.h5')
+inps = mc.create_model('/data/neuro_phys_sim/data/modelu2.h5')
 
-def draw_binned_sigma(bin_means, bin_sep, bins, id=""):
+def draw_binned_sigma(bin_means, bin_sep, bins, id="", thr=1.0):
     bins_arrx = []
     bins_arry = []
     for bv, b in zip(bin_sep, bins):
@@ -26,10 +26,10 @@ def draw_binned_sigma(bin_means, bin_sep, bins, id=""):
                 bins_arrx.append(b)
                 bins_arry.append(np.log(v))
 
-    color = np.asarray([item < 3 for item in bin_means], dtype='uint8')*0.7+0.2
+    color = np.asarray([item < thr for item in bin_means], dtype='uint8')*0.7+0.2
     plt.plot(bins_arrx, bins_arry, 'r.', zorder=1, label='Standard deviations')
     plt.scatter(bins, np.log(bin_means), c=color, s=10, cmap='winter', zorder=10, label=u'Mean std per bin')
-    plt.axhline(y = np.log(3), color='g', zorder=11, label=u'3 std')
+    plt.axhline(y = np.log(thr), color='g', zorder=11, label=u'1 std')
     print 'bin_means different from 0 - find log: ', bin_means[bin_means != 0]
     # print np.trim_zeros(bin_means)
     log_m = np.log(bin_means[bin_means != 0]).mean()
@@ -46,9 +46,9 @@ def draw_binned_sigma(bin_means, bin_sep, bins, id=""):
 
 def data2model(data):
     # model_out =  mc.pred_model(inps, data)
-    model_out =  mc.pred_model(m2, data)
-
-    return [model_out[0], model_out[2]], [model_out[1], model_out[3]] # get the means values
+    model_out =  mc.pred_model(inps, data)
+    model_out = np.asarray(model_out)
+    return [model_out[0][0][0], model_out[1][0][0]], [model_out[0][0][1], model_out[1][0][1]] # get the means values
 
 def get_x_pos_LLH(w):
     target_x = bin_center
@@ -79,12 +79,12 @@ def retrain_network_with_new_samples(model, extra_crops,
 
     # Generate model
     batch_size = 256*8
-    nb_epoch = 30
+    nb_epoch = 7
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.75, verbose=1,
-                                  patience=5, cooldown=10, min_lr=0.000001)
-    # optimz = Adamax(lr=1e-5, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
+                                  patience=2, cooldown=15, min_lr=0.000001)
 
-    inps.compile(optimizer='adam', loss='mse')
+    optimizer = Adamax(lr=1e-4, clipnorm=1e-6, clipvalue=1e6)
+    inps.compile(optimizer=optimizer, loss=mc.mean_log_Gaussian_like)
     # Full train
     hist = inps.fit(Xc, Yc,
         batch_size=batch_size,
@@ -133,7 +133,7 @@ for epoch in xrange(total_epochs):
     # Draw data
     draw_histograms(x_all[:,0], "eval_x"+str(epoch))
     draw_histograms(x_pred_all[:,0], "eval_x_pred"+str(epoch))
-    # draw_histograms(sigma_prob_all[:,0], "eval_sigma_prob_"+str(epoch), range=None)
+    draw_histograms(sigma_prob_all[:,0], "eval_sigma_prob_"+str(epoch), range=None)
 
     print('Processed everything!')
 
@@ -157,11 +157,16 @@ for epoch in xrange(total_epochs):
     log_mean = np.asarray([m if np.isfinite(m) else 0 for m in log_mean])
     csum = np.cumsum(log_mean)
 
-    samples_from_histogram = 10
-    samples_from_fitted_world = 10
+    # print 'CSUM: ', csum, log_mean
+    # if (csum[-1] <= 0):
+    #     print 'Empty csum!'
+    #     continue
+
+    samples_from_histogram = 3
+    samples_from_fitted_world = 3
     for x in xrange(samples_from_histogram):
         draw = np.random.uniform(low=0.0, high=csum[-1])
-        # print 'Draw: ', draw
+        print 'Draw: ', draw
         idxs = csum > draw
         # print 'Idxs ', idxs
 

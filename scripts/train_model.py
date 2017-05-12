@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 
 # Generate model
 batch_size = 256*8 # 256
-nb_epoch = 10
+nb_epoch = 300
 
 inps = mc.create_model() # load the previously trained model '/data/neuro_phys_sim/data/model.h5'
 # inps.compile(optimizer='adam', loss='mse') # , metrics=['accuracy']
@@ -37,6 +37,7 @@ reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.6, verbose=1,
 mc.plot_model(inps)
 
 # Load data
+print 'Loading data ...'
 X, Y = sw.getDataFromArchive('/data/neuro_phys_sim/data/data_300.hdf5',
                              sample_from_data=False)
 
