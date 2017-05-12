@@ -489,7 +489,7 @@ def generateData(theta, sim_length_s=5):
     writer.close()
     return data, outdata
 
-def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=3.0):
+def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0, verbose=1):
     world, c = createWorld(theta)
     timeStep = 1.0 / 60
     vel_iters, pos_iters = 10, 10
@@ -519,7 +519,8 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=3.0):
         ncrops = [np.asarray(crops[ci]).reshape(1, 32, 32, 1) for ci in xrange(len(crops))]
 
         new_outputs, new_variances = model_func(ncrops)
-        new_variances = np.exp(np.asarray(new_variances, dtype='float64').flatten()/2.0)
+        new_variances = np.log(1 + np.exp(new_variances))
+        # new_variances = np.exp(np.asarray(new_variances, dtype='float64').flatten()/2.0)
 
         new_outputs = np.asarray(new_outputs, dtype='float64').flatten()
 
@@ -539,7 +540,8 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=3.0):
                 wrong_pred_output.append([delta_p.x, delta_p.y, old_angle - c.angle,
                          c.linearVelocity.x, c.linearVelocity.y, c.angularVelocity])
         elif (i > 0):
-            print 'I\'m within bounds! ', sprob
+            if (verbose > 1):
+                print 'I\'m within bounds! ', sprob
 
         if (b2Vec2Norm(delta_p - getList2b2Vec2(old_outputs)) / b2Vec2Norm(delta_p) > 0.1):
             impV = GetImpactV(world, c)
@@ -565,7 +567,8 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=3.0):
 
         # Stop if world is no longer moving
         if (isWorldStatic):
-            print 'World is static, stopping at ', i
+            if (verbose > 0):
+                print 'World is static, stopping at ', i
             break
 
     writer.close()
