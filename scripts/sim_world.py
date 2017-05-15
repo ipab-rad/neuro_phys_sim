@@ -489,12 +489,13 @@ def generateData(theta, sim_length_s=5):
     writer.close()
     return data, outdata
 
-def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0, verbose=1):
+def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0, verbose=1, saveVideo=False):
     world, c = createWorld(theta)
     timeStep = 1.0 / 60
     vel_iters, pos_iters = 10, 10
-    writer = skvideo.io.FFmpegWriter("/data/neuro_phys_sim/data/model_eval.mp4", outputdict={
-          '-vcodec': 'libx264', '-b': '300000000', '-r': '60'})
+    if (saveVideo):
+        writer = skvideo.io.FFmpegWriter("/data/neuro_phys_sim/data/model_eval.mp4", outputdict={
+              '-vcodec': 'libx264', '-b': '300000000', '-r': '60'})
 
     predicted_output = []
     real_output = []
@@ -543,7 +544,8 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0, ve
             if (verbose > 1):
                 print 'I\'m within bounds! ', sprob
 
-        if (b2Vec2Norm(delta_p - getList2b2Vec2(old_outputs)) / b2Vec2Norm(delta_p) > 0.1):
+        if ((b2Vec2Norm(delta_p) != 0) and \
+           (b2Vec2Norm(delta_p - getList2b2Vec2(old_outputs)) / b2Vec2Norm(delta_p) > 0.1)):
             impV = GetImpactV(world, c)
             # print 'Impact velocity ', impV
             # print 'THINGS @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@'
@@ -554,10 +556,11 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0, ve
         predicted_output.append(old_outputs)
         real_output.append(delta_p)
 
-        # Draw the world
-        canvas = drawWorld(world)
-        canvas = drawModelPredictions(canvas, c, delta_p, old_outputs)
-        writer.writeFrame(canvas.astype('uint8'))
+        if (saveVideo):
+            # Draw the world
+            canvas = drawWorld(world)
+            canvas = drawModelPredictions(canvas, c, delta_p, old_outputs)
+            writer.writeFrame(canvas.astype('uint8'))
 
         old_outputs = new_outputs
         old_variances = new_variances
@@ -571,7 +574,8 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0, ve
                 print 'World is static, stopping at ', i
             break
 
-    writer.close()
+    if (saveVideo):
+        writer.close()
     real_output = [[x[0], x[1]] for x in real_output]
     return real_output, predicted_output, sigma_prob, wrong_pred_crops, wrong_pred_output
 

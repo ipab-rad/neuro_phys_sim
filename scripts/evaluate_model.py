@@ -14,6 +14,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+# Params
+NO_VALUE_IN_BIN = -1
+
 # Load models
 inps = mc.create_model('/data/neuro_phys_sim/data/modelu2.h5')
 
@@ -24,20 +27,23 @@ def draw_binned_sigma(bin_means, bin_sep, bins, id="", thr=1.0):
         for v in bv:
             if (v != 0):
                 bins_arrx.append(b)
-                bins_arry.append(np.log(v))
+                bins_arry.append(v)
 
-    color = np.asarray([item < thr for item in bin_means], dtype='uint8')*0.7+0.2
+    full_bins_idx = bin_means != NO_VALUE_IN_BIN
+    # print ';IDX:', full_bins_idx, '\n', bin_means[full_bins_idx], '\n', bins[full_bins_idx]
+    color = np.asarray([item < thr for item in bin_means[full_bins_idx]], dtype='int32')*0.7+0.2
     plt.plot(bins_arrx, bins_arry, 'r.', zorder=1, label='Standard deviations')
-    plt.scatter(bins, np.log(bin_means), c=color, s=10, cmap='winter', zorder=10, label=u'Mean std per bin')
-    plt.axhline(y = np.log(thr), color='g', zorder=11, label=u'1 std')
-    print 'bin_means different from 0 - find log: ', bin_means[bin_means != 0]
-    # print np.trim_zeros(bin_means)
-    log_m = np.log(bin_means[bin_means != 0]).mean()
-    plt.axhline(y = log_m, color='c', zorder=10, label=u'mean log std ('+"{:.2f}".format(log_m)+')')
-    plt.title('Histogram of log mean std.')
+    plt.scatter(bins[full_bins_idx], bin_means[full_bins_idx],
+                c=color, s=10, cmap='winter',
+                zorder=10, label=u'Mean std per bin')
+    plt.axhline(y = thr, color='g', zorder=11, label=u'1 std')
+    print 'bin_means different from 0 - find: ', bin_means[full_bins_idx]
+    std_means = bin_means[full_bins_idx].mean()
+    plt.axhline(y = std_means, color='c', zorder=10, label=u'mean std ('+"{:.2f}".format(std_means)+')')
+    plt.title('Histogram of mean std.')
     plt.xlim(-0.6, 0.6)
     plt.xlabel('delta x')
-    plt.ylabel('log std')
+    plt.ylabel('std')
     plt.legend(loc='upper left')
     filename = "/data/neuro_phys_sim/images/mean_hist_"+str(epoch)+".png"
     plt.savefig(filename)
@@ -135,7 +141,7 @@ for epoch in xrange(total_epochs):
     draw_histograms(x_pred_all[:,0], "eval_x_pred"+str(epoch))
     draw_histograms(sigma_prob_all[:,0], "eval_sigma_prob_"+str(epoch), range=None)
 
-    print('Processed everything!')
+    print('Processed evaluating MCMC chains!')
 
     # Format data
     x = x_all[:,0].reshape(-1, 1)
@@ -145,17 +151,21 @@ for epoch in xrange(total_epochs):
     # Find mean stds of binned preductions
     bins, bin_size = np.linspace(np.min(x), np.max(x), num=50,
                                  endpoint=False, retstep=True)
+    bins = np.asarray(bins)
     digitized = np.digitize(y, bins)
-    bin_sep = [sigmas[digitized == i] for i in range(0, len(bins))]
-    bin_means = [bin.mean() if not bin.size == 0 else 0 for bin in bin_sep]
+    bin_sep = np.asarray([sigmas[digitized == i] for i in range(0, len(bins))])
+    bin_means = np.asarray([bin.mean() if not bin.size == 0 else NO_VALUE_IN_BIN
+                 for bin in bin_sep])
+
 
     # Draw histogram of std
     draw_binned_sigma(bin_means, bin_sep, bins, epoch)
 
     # Sample most uncertain locations in log space
-    log_mean = np.log(bin_means)
-    log_mean = np.asarray([m if np.isfinite(m) else 0 for m in log_mean])
-    csum = np.cumsum(log_mean)
+    # log_mean = np.log(bin_means)
+    # log_mean = np.asarray([m if np.isfinite(m) else 0 for m in log_mean])
+    # csum = np.cumsum(log_mean)
+    csum = np.cumsum(bin_means)
 
     # print 'CSUM: ', csum, log_mean
     # if (csum[-1] <= 0):
@@ -184,8 +194,10 @@ for epoch in xrange(total_epochs):
             x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(
                                                     diff_samples[-i], data2model, # TODO: Check if i is the correct size if samples_from_fitted_world is used
                                                     threshold_sigma=0.5)
-            additional_training_crops = np.concatenate((additional_training_crops , np.asarray(crops)))
-            additional_training_outs = np.concatenate((additional_training_outs , np.asarray(outs)))
+            additional_training_crops = np.concatenate(
+                                (additional_training_crops , np.asarray(crops)))
+            additional_training_outs = np.concatenate(
+                                (additional_training_outs , np.asarray(outs)))
             # print 'Addeed data shapes: ', additional_training_crops.shape, additional_training_outs.shape
             print 'Extra data ', len(crops)
 
@@ -193,95 +205,14 @@ for epoch in xrange(total_epochs):
         additional_training_outs = np.asarray(additional_training_outs)
 
     print 'Total Extra Data ', additional_training_crops.shape, additional_training_outs.shape
+    print 'Retraining for lead epoch ', epoch
     inps, X, Y = retrain_network_with_new_samples(inps, additional_training_crops,
                                                 additional_training_outs, X, Y)
-
 
     print 'Total training data now is: ', X.shape
 
     # Saving model
-    inps.save('/data/neuro_phys_sim/data/model_refited_' + str(epoch) + '.h5')  # creates a HDF5 file
+    inps.save('/data/neuro_phys_sim/data/models/model_refited_' + str(epoch) + '.h5')  # creates a HDF5 file
     print('Saved model!')
 
-# # =======
-# print 'Checking improvements'
-# x_all = np.empty(shape=(0, 2))
-# x_pred_all = np.empty(shape=(0, 2))
-# sigma_prob_all = np.empty(shape=(0, 2))
-# x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(samples[-1], data2model)
-# print "Add new values len: ", len(crops)
-# x_all = np.concatenate((x_all, np.asarray(x)))
-# x_pred_all = np.concatenate((x_pred_all, np.asarray(x_pred)))
-# sigma_prob_all = np.concatenate((sigma_prob_all, np.asarray(sigma_prob)))
-
-# draw_histograms(x_all[:,0], "updated_eval_x")
-# draw_histograms(x_pred_all[:,0], "updated_eval_x_pred")
-# draw_histograms(sigma_prob_all[:,0], "updated_eval_sigma_prob", range=None)
-
-# x = x_all[:,0].reshape(-1, 1)
-# y = x_pred_all[:,0].reshape(-1,)
-# sigmas = sigma_prob_all[:,0].reshape(-1,)
-
-# # Find mean stds of binned preductions
-# bins, bin_size = np.linspace(np.min(x), np.max(x), num=50,
-#                              endpoint=False, retstep=True)
-# digitized = np.digitize(y, bins)
-# bin_sep = [sigmas[digitized == i] for i in range(0, len(bins))]
-# bin_means = [bin.mean() if not bin.size == 0 else 0 for bin in bin_sep]
-
-# # Draw histogram of std
-# draw_binned_sigma(bin_means, bin_sep, bins)
-
-
-print 'Done'
-# ############## USELESS GPs
-
-# # Fit GP
-# from sklearn.gaussian_process import GaussianProcessRegressor
-# from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
-# import matplotlib
-# matplotlib.use('Agg')
-# import matplotlib.pyplot as plt
-
-# kernel =  RBF(length_scale=0.1, length_scale_bounds=(1e-5, 1e2)) + \
-#           WhiteKernel(noise_level=1e-3, noise_level_bounds=(1e-10, 1e+1))#* ConstantKernel(1.0, (1e-3, 1e3))
-# # Ground truth data
-# X = x_all[:,0].reshape(-1, 1)
-
-# # Observations and noise
-# y = x_pred_all[:,0].reshape(-1,)
-# noise_variable = 0.0005
-
-# print "x_all[:,0] extra shape", X.shape
-# print "y_pred_all[:,0] extra shape", y.shape
-
-# # Instanciate a Gaussian Process model
-# gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=2,
-#                                 alpha=noise_variable )# normalize_y=True
-
-# # Fit to data using Maximum Likelihood Estimation of the parameters
-# gp.fit(X, y)
-
-# # Make the prediction on the meshed x-axis (ask for MSE as well)
-# # x = np.atleast_2d(np.linspace(np.min(X), np.max(X), 100)).T
-# x = np.atleast_2d(np.linspace(-0.5, 0.5, 100)).T
-# y_pred, sigma = gp.predict(x, return_std=True)
-
-# # Plot the function, the prediction and the 95% confidence interval based on
-# # the MSE
-# fig = plt.figure()
-# plt.plot(x, x, 'r:', label=u'$f(x) = x $')
-# plt.plot(X, y, 'r.', markersize=10, label=u'Observations')
-# plt.plot(x, y_pred, 'b-', label=u'Prediction')
-# plt.fill(np.concatenate([x, x[::-1]]),
-#          np.concatenate([y_pred - 1.9600 * sigma,
-#                         (y_pred + 1.9600 * sigma)[::-1]]),
-#          alpha=.5, fc='b', ec='None', label='95% confidence interval')
-# plt.xlabel('$x$')
-# plt.ylabel('$x_{hat}$')
-# plt.ylim(np.min(X), np.max(X))
-# plt.xlim(np.min(X), np.max(X))
-# plt.legend(loc='upper left')
-# plt.savefig('/data/neuro_phys_sim/data/gp.png')
-
-# print 'Saved fig'
+print 'Processing done.'
