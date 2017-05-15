@@ -147,7 +147,7 @@ def mhmc(n, prop_sigma=1, llh_func=get_vel_LLH):
         # x_new = create_urandom_sample()
         llh_new = llh_func(x_new)
 
-        if (i%100 == 0 and i != 0):
+        if (i%500 == 0 and i != 0):
             print i, '/', n
             print 'llh new: ', llh_new, 'llh old: ', llh_old
 
