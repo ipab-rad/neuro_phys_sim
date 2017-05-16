@@ -37,7 +37,7 @@ def draw_binned_sigma(bin_means, bin_sep, bins, id="", thr=1.0):
                 c=color, s=10, cmap='winter',
                 zorder=10, label=u'Mean std per bin')
     plt.axhline(y = thr, color='g', zorder=11, label=u'1 std')
-    print 'bin_means different from 0 - find: ', bin_means[full_bins_idx]
+    # print 'bin_means different from 0 - find: ', bin_means[full_bins_idx]
     std_means = bin_means[full_bins_idx].mean()
     plt.axhline(y = std_means, color='c', zorder=10, label=u'mean std ('+"{:.2f}".format(std_means)+')')
     plt.title('Histogram of mean std.')
@@ -64,6 +64,13 @@ def get_x_pos_LLH(w):
     return s.llh_data_np_nonnorm(pos[:,0], target_x, target_sigma) + \
            s.llh_data_np_nonnorm(dist2obj, 0, 1)
 
+def get_skewed_LLH(w):
+    pos, _, vel, dist2obj, c_count, impV = sw.simulateWorld(s.th(w), sim_length_s=5)
+    impVnorm = np.linalg.norm(impV, axis = 1)
+    return s.llh_data_np_nonnorm(impVnorm, 3, 1) + \
+           s.llh_data_np_nonnorm(dist2obj, 0, 1) + \
+           s.llh_data_np_nonnorm(pos[:,0], 1.0, 1.0)
+
 
 def retrain_network_with_new_samples(model, extra_crops,
                                             extra_outs,
@@ -85,18 +92,18 @@ def retrain_network_with_new_samples(model, extra_crops,
 
     # Generate model
     batch_size = 256*8
-    nb_epoch = 7
+    nb_epoch = 5
     reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.75, verbose=1,
                                   patience=2, cooldown=15, min_lr=0.000001)
 
-    optimizer = Adamax(lr=1e-4, clipnorm=1e-6, clipvalue=1e6)
+    optimizer = Adamax(lr=1e-5, clipnorm=1e-6, clipvalue=1e6)
     inps.compile(optimizer=optimizer, loss=mc.mean_log_Gaussian_like)
     # Full train
     hist = inps.fit(Xc, Yc,
         batch_size=batch_size,
         epochs=nb_epoch,
         shuffle=True,  # does not affect valdiation set
-        validation_split=0.1,
+        validation_split=0.01,
         callbacks=[reduce_lr]
         )
     return inps, X, Y
@@ -105,6 +112,10 @@ def retrain_network_with_new_samples(model, extra_crops,
 X = np.empty(shape=(0, 7, 32, 32))
 Y = np.empty(shape=(0, 6))
 
+# Evaluation samples
+print 'Generating evaluation set ...'
+eval_samples = s.parallel_mhmc(60, 1000, 1) # get best sample from 10 chains  with 1000 steps each
+print 'Done generating evaluation set.'
 
 total_epochs = 100
 for epoch in xrange(total_epochs):
@@ -118,16 +129,16 @@ for epoch in xrange(total_epochs):
     additional_training_crops = np.empty(shape=(0, 7, 32, 32))
     additional_training_outs = np.empty(shape=(0, 6))
 
-    for i in xrange(3):
-        samples, _ = mhmc(1, 1)
-        x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(samples[-1], data2model)
+    for sam in eval_samples:
+        # samples, _ = mhmc(1, 1)
+        x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(sam, data2model)
         # print "Add new values len: ", len(crops)
         x_all = np.concatenate((x_all, np.asarray(x)))
         x_pred_all = np.concatenate((x_pred_all, np.asarray(x_pred)))
         sigma_prob_all = np.concatenate((sigma_prob_all, np.asarray(sigma_prob)))
         # print 'Before Addeed data shapes: ', additional_training_crops.shape, additional_training_outs.shape
-        additional_training_crops = np.concatenate((additional_training_crops, np.asarray(crops)), axis=0)
-        additional_training_outs = np.concatenate((additional_training_outs, np.asarray(outs)), axis=0)
+        # additional_training_crops = np.concatenate((additional_training_crops, np.asarray(crops)), axis=0)
+        # additional_training_outs = np.concatenate((additional_training_outs, np.asarray(outs)), axis=0)
         # print 'Addeed data shapes: ', additional_training_crops.shape, additional_training_outs.shape
 
     sigma_prob_all = np.asarray(sigma_prob_all)
@@ -172,8 +183,8 @@ for epoch in xrange(total_epochs):
     #     print 'Empty csum!'
     #     continue
 
-    samples_from_histogram = 3
-    samples_from_fitted_world = 3
+    samples_from_histogram = 5
+    samples_from_fitted_world = 30
     for x in xrange(samples_from_histogram):
         draw = np.random.uniform(low=0.0, high=csum[-1])
         print 'Draw: ', draw
@@ -187,13 +198,13 @@ for epoch in xrange(total_epochs):
         bin_center = bins[idx] + bin_size/2.0
 
 
-        _, diff_samples = s.mhmc(1000, prop_sigma=1, llh_func=get_x_pos_LLH)
-        # print 'diff_samples ', len(diff_samples)
+        train_samples = s.parallel_mhmc(samples_from_fitted_world, 5000, 1, prop_sigma=1, llh_func=get_x_pos_LLH)
+        # print 'train_samples ', len(train_samples)
 
-        for i in xrange(1, min(len(diff_samples), samples_from_fitted_world) + 1):
+        for ts in train_samples:
             x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(
-                                                    diff_samples[-i], data2model, # TODO: Check if i is the correct size if samples_from_fitted_world is used
-                                                    threshold_sigma=0.5)
+                                                    ts, data2model,
+                                                    threshold_sigma=0.25)
             additional_training_crops = np.concatenate(
                                 (additional_training_crops , np.asarray(crops)))
             additional_training_outs = np.concatenate(
