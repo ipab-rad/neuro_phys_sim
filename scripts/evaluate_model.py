@@ -114,7 +114,7 @@ Y = np.empty(shape=(0, 6))
 
 # Evaluation samples
 print 'Generating evaluation set ...'
-eval_samples = s.parallel_mhmc(60, 1000, 1) # get best sample from 10 chains  with 1000 steps each
+eval_samples = s.parallel_mhmc(30, 1000, 1) # get best sample from 10 chains  with 1000 steps each
 print 'Done generating evaluation set.'
 
 total_epochs = 100

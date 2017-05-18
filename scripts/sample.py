@@ -197,8 +197,9 @@ def parallel_mhmc(s, n, p, prop_sigma=1, llh_func=get_vel_LLH):
 
 if __name__ == "__main__":
 
-    parallel_mhmc(100, 1000, 10)
-    exit(0)
+    # TODO: Make this a unit test
+    # parallel_mhmc(100, 1000, 10)
+    # exit(0)
 
     # TODO: Make parallel generateData f()
     # TODO: Make parallel simulateWithModel f()
@@ -207,11 +208,12 @@ if __name__ == "__main__":
     # sw.simulateWorld(th(samples[-1]), saveVideo=True, filename="best.mp4")
     # print 'done'; exit(0)
 
-    sample_attempts = 125
+    print 'Generating a dataset!'
+    sample_attempts = 2
     for i in range(sample_attempts):
         print '-----------------------------'
         print 'Sampling ', i, ' / ', sample_attempts
-        samples, diff_samples = mhmc(50, 1)
+        diff_samples = parallel_mhmc(60, 50, 5)
         print 'Done sampling.'
         # data, outdata = sw.generateData(th(samples[-1]))
         # _, _, vel, _, _, _ = sw.simulateWorld(th(samples[-1]), saveVideo=True, filename="best.mp4")
@@ -221,10 +223,9 @@ if __name__ == "__main__":
         print 'Different samples len ', len(diff_samples)
         if len(diff_samples) == 0:
             continue
-        id=0
-        for s in reversed(diff_samples): # get best 10 samples
+        for s in diff_samples:
             # _, _, vel, _, _, _ = sw.simulateWorld(th(s), saveVideo=True, filename="list/after_burn"+str(i)+"_"+str(id)+".mp4")
-            data, outdata = sw.generateData(th(s))
+            data, outdata = sw.generateData(s)
             # import cv2
             # cv2.imwrite("/data/neuro_phys_sim/data/cid.png", np.asarray(data['cid'][-1]*255))
             # cv2.imwrite("/data/neuro_phys_sim/data/scrop.png", np.asarray(data['scrop'][-1]*255))
@@ -233,9 +234,6 @@ if __name__ == "__main__":
             # cv2.imwrite("/data/neuro_phys_sim/data/vely.png", np.asarray(data['vely'][-1]*255))
             # cv2.imwrite("/data/neuro_phys_sim/data/avel.png", np.asarray(data['avel'][-1]*255))
             # cv2.imwrite("/data/neuro_phys_sim/data/rest.png", np.asarray(data['rest'][-1]*255))
-            size, _ = sw.updateArchive('/data/neuro_phys_sim/data/data_300.hdf5', data, outdata)
-            id += 1
-            if (id >= 10):
-                break
+            size, _ = sw.updateArchive('/data/neuro_phys_sim/data/data_100.hdf5', data, outdata)
         diff_samples = []
         print "Dataset size: ", size
