@@ -8,7 +8,7 @@ import sim_world as sw
 import model_creation as mc
 
 import sample as s
-from sample import create_urandom_sample, draw_histograms, mhmc
+from sample import create_urandom_sample, draw_histograms, mhmc, dplot
 
 import matplotlib
 matplotlib.use('Agg')
@@ -18,7 +18,12 @@ import matplotlib.pyplot as plt
 NO_VALUE_IN_BIN = -1
 
 # Load models
-inps = mc.create_model('/data/neuro_phys_sim/data/modelu2.h5')
+inps = mc.create_model('/data/neuro_phys_sim/data/model_100.h5')
+
+# All of the data
+X = np.empty(shape=(0, 7, 32, 32))
+Y = np.empty(shape=(0, 6))
+
 
 def draw_binned_sigma(bin_means, bin_sep, bins, id="", thr=1.0):
     bins_arrx = []
@@ -56,16 +61,16 @@ def data2model(data):
     model_out = np.asarray(model_out)
     return [model_out[0][0][0], model_out[1][0][0]], [model_out[0][0][1], model_out[1][0][1]] # get the means values
 
-def get_x_pos_LLH(w):
+def get_x_pos_LLH(w, seed):
     target_x = bin_center
     target_sigma = np.sqrt(bin_size)*3.0
     # print 'mean: ', target_x, 'sigma: ', target_sigma
-    pos, _, vel, dist2obj, c_count, impV = sw.simulateWorld(s.th(w), sim_length_s=5)
+    pos, _, vel, dist2obj, c_count, impV = sw.simulateWorld(s.th(w), sim_length_s=5, seed=seed)
     return s.llh_data_np_nonnorm(pos[:,0], target_x, target_sigma) + \
            s.llh_data_np_nonnorm(dist2obj, 0, 1)
 
 def get_skewed_LLH(w):
-    pos, _, vel, dist2obj, c_count, impV = sw.simulateWorld(s.th(w), sim_length_s=5)
+    pos, _, vel, dist2obj, c_count, impV = sw.simulateWorld(s.th(w), sim_length_s=5, seed=seed)
     impVnorm = np.linalg.norm(impV, axis = 1)
     return s.llh_data_np_nonnorm(impVnorm, 3, 1) + \
            s.llh_data_np_nonnorm(dist2obj, 0, 1) + \
@@ -73,13 +78,14 @@ def get_skewed_LLH(w):
 
 
 def retrain_network_with_new_samples(model, extra_crops,
-                                            extra_outs,
-                                            X, Y):
+                                            extra_outs):
+    global X
+    global Y
     print 'Updating extra archive'
     size, _ = sw.updateArchiveDirectly('/data/neuro_phys_sim/data/extra_data.hdf5', extra_crops, extra_outs)
     if (len(X) == 0 or len(Y) == 0):
         print 'Reading from dataset.'
-        X, Y = sw.getDataFromArchive('/data/neuro_phys_sim/data/data_300.hdf5', sample_from_data=False)
+        X, Y = sw.getDataFromArchive('/data/neuro_phys_sim/data/data_100.hdf5', sample_from_data=False)
         extra_crops, extra_outs = sw.getDataFromArchive('/data/neuro_phys_sim/data/extra_data.hdf5')
 
     X = np.concatenate((X, extra_crops), axis=0)
@@ -106,17 +112,14 @@ def retrain_network_with_new_samples(model, extra_crops,
         validation_split=0.01,
         callbacks=[reduce_lr]
         )
-    return inps, X, Y
-
-# All of the data
-X = np.empty(shape=(0, 7, 32, 32))
-Y = np.empty(shape=(0, 6))
+    # return inps, X, Y
 
 # Evaluation samples
 print 'Generating evaluation set ...'
-eval_samples = s.parallel_mhmc(30, 1000, 1) # get best sample from 10 chains  with 1000 steps each
+eval_samples, eval_samples_seeds = s.parallel_mhmc(30, 1000, 1) # get best sample from 10 chains  with 1000 steps each
 print 'Done generating evaluation set.'
 
+mse_all=[]
 total_epochs = 100
 for epoch in xrange(total_epochs):
     print '-----------'
@@ -128,10 +131,14 @@ for epoch in xrange(total_epochs):
 
     additional_training_crops = np.empty(shape=(0, 7, 32, 32))
     additional_training_outs = np.empty(shape=(0, 6))
+    mse = []#np.empty(shape=(0, 0))
 
-    for sam in eval_samples:
+    print 'Checking over evaluation samples...'
+    for i, sam in enumerate(eval_samples):
         # samples, _ = mhmc(1, 1)
-        x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(sam, data2model)
+        x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(
+                                                    sam, data2model,
+                                                    seed=eval_samples_seeds[i])
         # print "Add new values len: ", len(crops)
         x_all = np.concatenate((x_all, np.asarray(x)))
         x_pred_all = np.concatenate((x_pred_all, np.asarray(x_pred)))
@@ -178,13 +185,9 @@ for epoch in xrange(total_epochs):
     # csum = np.cumsum(log_mean)
     csum = np.cumsum(bin_means)
 
-    # print 'CSUM: ', csum, log_mean
-    # if (csum[-1] <= 0):
-    #     print 'Empty csum!'
-    #     continue
 
-    samples_from_histogram = 5
-    samples_from_fitted_world = 30
+    samples_from_histogram = 3 #5
+    samples_from_fitted_world = 3#10
     for x in xrange(samples_from_histogram):
         draw = np.random.uniform(low=0.0, high=csum[-1])
         print 'Draw: ', draw
@@ -198,27 +201,52 @@ for epoch in xrange(total_epochs):
         bin_center = bins[idx] + bin_size/2.0
 
 
-        train_samples = s.parallel_mhmc(samples_from_fitted_world, 5000, 1, prop_sigma=1, llh_func=get_x_pos_LLH)
+        train_samples, train_samples_seeds = s.parallel_mhmc(samples_from_fitted_world, 5000, 1, prop_sigma=1, llh_func=get_x_pos_LLH)
         # print 'train_samples ', len(train_samples)
 
-        for ts in train_samples:
+        # train_samples_seeds = [(os.getpid() + int(time.time()%1e3))
+        #                                 for i in xrange(len(train_samples))]
+        for i, ts in enumerate(train_samples):
             x, x_pred, sigma_prob, crops, outs = sw.simulateWithModel(
                                                     ts, data2model,
-                                                    threshold_sigma=0.25)
+                                                    threshold_sigma=0.25,
+                                                    seed=train_samples_seeds[i])
+            print additional_training_outs.shape, np.asarray(outs).shape
+            print additional_training_crops.shape, np.asarray(crops).shape
+            # print x, x_pred
+            # print ((np.asarray(x) - np.asarray(x_pred)) ** 2).mean().shape
+            print 'mse for sample: ', ((np.asarray(x) - np.asarray(x_pred)) ** 2).mean()
+            mse.append(((np.asarray(x) - np.asarray(x_pred)) ** 2).mean())
             additional_training_crops = np.concatenate(
-                                (additional_training_crops , np.asarray(crops)))
+                                (additional_training_crops , np.asarray(crops)), axis=0)
             additional_training_outs = np.concatenate(
-                                (additional_training_outs , np.asarray(outs)))
+                                (additional_training_outs , np.asarray(outs)), axis=0)
             # print 'Addeed data shapes: ', additional_training_crops.shape, additional_training_outs.shape
             print 'Extra data ', len(crops)
 
-        additional_training_crops = np.asarray(additional_training_crops)
-        additional_training_outs = np.asarray(additional_training_outs)
+        # additional_training_crops = np.asarray(additional_training_crops)
+        # additional_training_outs = np.asarray(additional_training_outs)
+    # Save videos for visual feedback
+    sw.simulateWithModel(train_samples[-1], data2model, saveVideo=True, seed=train_samples_seeds[-1],
+        filename='/data/neuro_phys_sim/data/videos/model_train'+str(epoch)+'.mp4')
+    for x in xrange(1, 10):
+        sw.simulateWithModel(eval_samples[-x], data2model, saveVideo=True, seed=eval_samples_seeds[-1],
+            filename='/data/neuro_phys_sim/data/videos/model_eval'+str(x)+'_'+str(epoch)+'.mp4')
 
+
+    # print mse
+    print 'MSE: ', np.asarray(mse).mean()
     print 'Total Extra Data ', additional_training_crops.shape, additional_training_outs.shape
     print 'Retraining for lead epoch ', epoch
-    inps, X, Y = retrain_network_with_new_samples(inps, additional_training_crops,
-                                                additional_training_outs, X, Y)
+
+    mse_all.append(np.asarray(mse).mean())
+    dplot(np.asarray(mse_all), id='mse_'+str(epoch), xlabel='Iteration', ylabel='MSE', title='Average mean square error per iteration')
+    x, x_pred, _, _, _ = sw.simulateWithModel(eval_samples[-1], data2model, seed=eval_samples_seeds[-1])
+    dplot(np.asarray(x), np.asarray(x_pred), id='prediction_'+str(epoch), xlabel='x', ylabel='x prediction', title='Prediction vs. Ground Truth')
+
+    # Retrain network
+    retrain_network_with_new_samples(inps, additional_training_crops,
+                                           additional_training_outs)
 
     print 'Total training data now is: ', X.shape
 

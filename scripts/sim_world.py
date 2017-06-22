@@ -1,7 +1,7 @@
 #!/usr/bin/env python2
 
 import Box2D
-from Box2D import (b2PolygonShape, b2World, b2Distance)
+from Box2D import (b2PolygonShape, b2World, b2Distance, b2CircleShape)
 import cv2
 import numpy as np
 from matplotlib import cm
@@ -30,6 +30,8 @@ FOREGROUND_COLOUR = 1
 
 CROP_H_SIZE = 16
 CROP_SIZE = CROP_H_SIZE * 2
+
+CIRCLE_PROB = 0.2
 
 def engine2canvas_vertices(vertices):
     return [(int(SCREEN_OFFSETX + v[0]), int(SCREEN_OFFSETY - v[1]))
@@ -69,22 +71,29 @@ def _draw_contact(ce, screen, body):
         # print endpoint, position, normal_M
         cv2.line(screen, position, endpoint, colour)
 
-def _draw_circle(circle, screen, body, fixture):
+def _draw_circle(circle, screen, body, fixture=None):
     position = engine2canvas_vertices([body.transform * circle.pos * PPM])[0]
-    colour = body.userData['colour']
-    cv2.circle(screen, position, int(circle.radius * PPM), colour)
+
+    # Get colours for the contours and fill
+    fill_b, fill_g, fill_r = body.userData["colour"]
+    line_b, line_g, line_r = body.userData["colour_border"]
+    thickness = body.userData["border_thickness"]
+
+    # Draw on the canvas
+    cv2.circle(screen, position, int(circle.radius * PPM), (fill_b, fill_g, fill_r), -1)
+    cv2.circle(screen, position, int(circle.radius * PPM), (line_b, line_g, line_r), thickness)
 
 def _draw_polygon(polygon, screen, body=None, fixture=None):
     transform = body.transform
     vertices = np.asarray(engine2canvas_vertices(
         [transform * v * PPM for v in polygon.vertices]))
 
-    # Draw the contour and fill
-    fill_b, fill_g, fill_r = body.userData["colour"]#128, 128, 256
+    # Get colours
+    fill_b, fill_g, fill_r = body.userData["colour"]
     line_b, line_g, line_r = body.userData["colour_border"]
     thickness = body.userData["border_thickness"]
 
-    # print vertices
+    # Draw the contour and fill
     cv2.fillPoly(screen, [vertices], (fill_b, fill_g, fill_r))
     cv2.polylines(screen, [vertices], True, (line_b, line_g, line_r), thickness)
 
@@ -105,6 +114,16 @@ def inBodyCollision(body):
             if contact_edge.contact.touching and contact_edge.other.mass > .0:
                 return True
     return False
+
+def createRealWorld():
+    # Create world boundaries
+    world = createBaseWorld()
+
+    # Add special world
+    createStaticPaddle(world, (0, 3), 0.1)
+    createStaticPaddle(world, (5, 4), 0.3)
+
+    return world
 
 def createBaseWorld():
     world = b2World(gravity=(0, -9.8), doSleep=True)
@@ -144,10 +163,26 @@ def createConvexBody(world, pos, angle=0,
                      friction=0.5,
                      restitution=0.5,
                      vertices=[],
-                     border_thickness=1):
-    if not vertices:
-        vertices = [(0,0), (0, 2), (2,2), (2, 0)] # (3,1),
-    shape = b2PolygonShape(vertices=vertices)
+                     border_thickness=1
+                     # ,seed = 0
+                     ):
+    # random.seed(seed)
+    isCircle = random.random()<CIRCLE_PROB
+    if (isCircle):
+        shape = b2CircleShape(radius=max(0.5,random.random()*1))
+    else:
+        if not vertices:
+            # vertices = [(0,0), (0, 2), (2,2), (2, 0)] # (3,1),
+            vert_number = 4 + int(random.random()*4)
+            while True:
+                vertices = [(random.random()*2, random.random()*2)
+                            for i in xrange(vert_number)]
+                idx = cv2.convexHull(np.asarray(vertices, dtype=np.float32), returnPoints=False)
+                vertices = [vertices[i[0]] for i in idx]
+                # print np.asarray(vertices)
+                if cv2.contourArea(np.asarray(vertices, dtype=np.float32)) > 1.5:
+                    break
+        shape = b2PolygonShape(vertices=vertices)
     data = {"colour": np.asarray(cmap(random.random()))[:3]*255}
     data["colour_border"] = np.asarray([min(i*0.8, 255) for i in data["colour"]])
     data["border_thickness"] = border_thickness
@@ -156,7 +191,7 @@ def createConvexBody(world, pos, angle=0,
                        friction=friction, restitution=restitution)
     return body
 
-def createWorld(theta):
+def createWorld(theta, seed, real=False):
     '''
         Creates a whole instance of the world.
         theta decomposes to
@@ -180,21 +215,27 @@ def createWorld(theta):
     # print theta
 
     # Construct world
-    world = createBaseWorld()
-    createStaticPaddle(world, paddle_pos, paddle_angle)
+    random.seed(seed)
+    if (real):
+        world = createRealWorld()
+    else:
+        world = createBaseWorld()
+        createStaticPaddle(world, paddle_pos, paddle_angle)
 
-    # Create parent body
+    # Create coexisting body
     createConvexBody(world, (-1, 6.5), 0, density = parent_obj_density,
-                     restitution = parent_obj_k)
+                     restitution = parent_obj_k) # , seed=seed
 
+    # Create body of interest
     body = createConvexBody(world, obj_pos, obj_angle, density = obj_density,
-                            restitution = obj_k, border_thickness = 1)
+                            restitution = obj_k, border_thickness = 1) # , seed=seed)
     body.ApplyLinearImpulse(impulse=imp, point=body.worldCenter, wake=True)
 
     return world, body
 
-def drawWorld(world):
-    screen = np.ones((SCREEN_HEIGHT, SCREEN_WIDTH, 3), np.uint8) * \
+def drawWorld(world, screen=None):
+    if screen is None:
+        screen = np.ones((SCREEN_HEIGHT, SCREEN_WIDTH, 3), np.uint8) * \
                                                             BACKGROUND_COLOUR
 
     for body in world.bodies:
@@ -213,6 +254,22 @@ def drawDist(screen, pointA, pointB):
     vertices = engine2canvas_vertices([np.asarray(pointA) * PPM,
                                        np.asarray(pointB) * PPM])
     cv2.line(screen, vertices[0], vertices[1], [128, 128, 40])
+    return screen
+
+def drawLocation(c, delta_p, sigma, screen = None):
+    if screen is None:
+        screen = np.ones((SCREEN_HEIGHT, SCREEN_WIDTH, 3), np.uint8) * \
+                                                            BACKGROUND_COLOUR
+    if (b2Vec2Norm(delta_p) == 0):
+        return screen
+    scale = 1.0 / b2Vec2Norm(delta_p) * sigma * 3.0
+    vertices = engine2canvas_vertices([c.worldCenter * PPM,
+                            np.asarray(c.worldCenter + scale*getList2b2Vec2([delta_p.y, delta_p.x])) * PPM,
+                            np.asarray(c.worldCenter - scale*getList2b2Vec2([delta_p.y, delta_p.x])) * PPM])
+    position = vertices[0]
+    cv2.circle(screen, position, int(0.1 * PPM), (128, 128, 128), -1)
+    cv2.line(screen, vertices[0], vertices[1], [240, 128, 40])
+    cv2.line(screen, vertices[0], vertices[2], [240, 128, 40])
     return screen
 
 def drawModelPredictions(screen, c, delta_p, old_outputs):
@@ -279,9 +336,10 @@ def checkIfWorldStatic(world):
             break
     return isWorldStatic
 
-def simulateWorld(theta, sim_length_s=5, saveVideo=False, filename="outputvideo2.mp4"):
+def simulateWorld(theta, sim_length_s=5, saveVideo=False, filename="outputvideo2.mp4",
+                  seed=0, real=False):
     # print '----'
-    world, c = createWorld(theta)
+    world, c = createWorld(theta, seed=seed, real=real)
 
     if (saveVideo):
         # Save video
@@ -403,8 +461,8 @@ def extractCrops(world, c):
 
     return data
 
-def generateData(theta, sim_length_s=5):
-    world, c = createWorld(theta)
+def generateData(theta, sim_length_s=5, seed=0):
+    world, c = createWorld(theta, seed=seed)
     timeStep = 1.0 / 60
     vel_iters, pos_iters = 10, 10
     writer = skvideo.io.FFmpegWriter("/data/neuro_phys_sim/data/data.mp4", outputdict={
@@ -489,12 +547,14 @@ def generateData(theta, sim_length_s=5):
     writer.close()
     return data, outdata
 
-def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0, verbose=1, saveVideo=False):
-    world, c = createWorld(theta)
+def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0,
+                      verbose=1, saveVideo=False, filename='/data/neuro_phys_sim/data/model_eval.mp4',
+                      seed=0, real=False):
+    world, c = createWorld(theta, seed=seed, real=False)
     timeStep = 1.0 / 60
     vel_iters, pos_iters = 10, 10
     if (saveVideo):
-        writer = skvideo.io.FFmpegWriter("/data/neuro_phys_sim/data/model_eval.mp4", outputdict={
+        writer = skvideo.io.FFmpegWriter(filename, outputdict={
               '-vcodec': 'libx264', '-b': '300000000', '-r': '60'})
 
     predicted_output = []
@@ -509,9 +569,15 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0, ve
     old_pos = c.worldCenter
     old_angle = c.angle
     old_crops = []
+    trace = None
     for i in range(60 * sim_length_s + 1): # To allow datasize to be exactly 60*s
+
         world.Step(timeStep, vel_iters, pos_iters)
         isWorldStatic = checkIfWorldStatic(world)
+
+        if(real):
+            ## USE MODEL PREDICTION UPDATE
+            c.position -= np.asarray(old_outputs)
 
         crops = extractCrops(world, c)
         if len(crops) == 0:
@@ -531,7 +597,6 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0, ve
         from numpy.linalg import inv
         sprob = np.abs(np.matmul(inv(np.diag(old_variances)),
             np.asarray(getDeepConversion(delta_p - old_outputs))))
-        sigma_prob.append(sprob)
         # print 'Sprob: ', sprob
         if (np.max(sprob) > threshold_sigma):
             # print 'FAR TOOO LARGE!! '
@@ -553,13 +618,16 @@ def simulateWithModel(theta, model_func, sim_length_s=5, threshold_sigma=1.0, ve
             ##
 
         # Store outputs
-        predicted_output.append(old_outputs)
-        real_output.append(delta_p)
+        if (old_crops):
+            sigma_prob.append(sprob)
+            predicted_output.append(old_outputs)
+            real_output.append(delta_p)
 
         if (saveVideo):
             # Draw the world
+            # trace = drawLocation(c, delta_p, new_variances, trace) , trace.copy()
             canvas = drawWorld(world)
-            canvas = drawModelPredictions(canvas, c, delta_p, old_outputs)
+            # canvas = drawModelPredictions(canvas, c, delta_p, old_outputs)
             writer.writeFrame(canvas.astype('uint8'))
 
         old_outputs = new_outputs
@@ -628,4 +696,5 @@ def getDataFromArchive(filename, sample_from_data=False):
         if (sample_from_data):
             return f['data'][:256*8], f['outdata'][:256*8]
         else:
-            return f['data'][()], f['outdata'][()]
+            # return f['data'][()], f['outdata'][()]
+            return f['data'][:10000], f['outdata'][:10000]

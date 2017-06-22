@@ -10,6 +10,30 @@ import sim_world as sw
 import multiprocessing as mp
 import os, time
 
+np.seterr(over='ignore')
+
+def dplot(datax, datay=[], id=0, xlabel='x', ylabel='y', title='Plot', draw_diag=True):
+    if (len(datay) != 0):
+        # print datax
+        # print datay
+        plt.plot(datax, datay, 'b.')
+        if (draw_diag):
+            dmax = max(np.amax(datax), np.amax(datay))
+            dmin = min(np.amin(datax), np.amin(datay))
+            print 'Min max', dmin, dmax
+            plt.plot([dmin, dmax], [dmin, dmax], ls='--', c='0.3')
+
+    else:
+        plt.plot(datax, 'r:', alpha=0.5)
+        plt.plot(datax, 'm*')
+    plt.title(title)
+    filename = "/data/neuro_phys_sim/images/plot_" + str(id) + ".png"
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.savefig(filename)
+    plt.clf()
+    print 'Saved figure -', filename
+
 def draw_histograms(normv, id=0, range=0.6, draw_sorted=False):
     # Save to histogram
     plt.hist(normv, bins=50, facecolor='red')  # plt.hist passes it's arguments to np.histogram
@@ -21,7 +45,7 @@ def draw_histograms(normv, id=0, range=0.6, draw_sorted=False):
     plt.ylabel('occurances')
     plt.savefig(filename)
     plt.clf()
-    print 'Saved figure - ', filename
+    print 'Saved figure -', filename
 
     if draw_sorted:
         plt.plot(sorted(normv))
@@ -31,7 +55,7 @@ def draw_histograms(normv, id=0, range=0.6, draw_sorted=False):
             plt.ylim(ymax = range, ymin = -range)
         plt.savefig(filename)
         plt.clf()
-        print 'Saved figure - ', filename
+        print 'Saved figure -', filename
 
 # find likelihood of the magnitutde of v
 def llh_data_np_nonnorm(data, mean, sigma):
@@ -62,8 +86,9 @@ testE2Esim()
 def th(x):
     return x
 
-def get_vel_LLH(x):
-    _, _, vel, dist2obj, c_count, impV = sw.simulateWorld(th(x), sim_length_s=5)
+def get_vel_LLH(x, seed):
+    _, _, vel, dist2obj, c_count, impV = sw.simulateWorld(th(x), sim_length_s=5,
+            seed = seed) # , real=True
     normv = np.linalg.norm(vel, axis = 1)
     # print impV
     impVnorm = np.linalg.norm(impV, axis = 1)
@@ -86,10 +111,11 @@ def apply_range(value, vmin, vmax):
     return value
 
 def create_urandom_sample():
-    np.random.seed(os.getpid() + int(time.time()%1e3)) # Get new random seed
+    s = int((time.time() + os.getpid())%1e4)
+    np.random.seed(s) # Get new random seed
     new_sample = np.zeros(12)
-    new_sample[0] = np.random.uniform( -100, 100) # Impulse x
-    new_sample[1] = np.random.uniform( -100, 100) # Impulse y
+    new_sample[0] = np.random.uniform( -50, 50) # Impulse x
+    new_sample[1] = np.random.uniform( -50, 50) # Impulse y
     new_sample[2] = np.random.uniform( -11, 11)   # paddle pos x
     new_sample[3] = np.random.uniform(   3, 13)   # paddle pos y
     new_sample[4] = np.random.uniform(-np.pi, np.pi) # paddle angle
@@ -100,7 +126,7 @@ def create_urandom_sample():
     new_sample[9] = np.random.uniform( 0.5, 2.5)  # obj density
     new_sample[10] = np.random.uniform( .1, .90)  # parent object restitution
     new_sample[11] = np.random.uniform( 0.5, 2.5)  # parent obj density
-    return new_sample
+    return new_sample, s
 
 def generate_sample_prop(old_sample):
     new_sample = old_sample + \
@@ -114,8 +140,8 @@ def generate_sample_prop(old_sample):
                     np.random.normal(0, 0.1, 1)]).flatten()
 
     # Apply constraints
-    new_sample[0] = apply_range(new_sample[0], -100, 100)
-    new_sample[1] = apply_range(new_sample[1], -100, 100)
+    new_sample[0] = apply_range(new_sample[0], -50, 50)
+    new_sample[1] = apply_range(new_sample[1], -50, 50)
     new_sample[2] = apply_range(new_sample[2], -11, 11)
     new_sample[3] = apply_range(new_sample[3],  3, 13)
     new_sample[4] = apply_range(new_sample[4],-np.pi, np.pi)
@@ -134,22 +160,22 @@ target_sigma = 1
 # TODO: Make a function to sample k parallel mhmc chains
 def mhmc(n, prop_sigma=1, llh_func=get_vel_LLH):
     # x = generate_sample_prop(np.zeros(10))
-    x = create_urandom_sample()
+    x, seed = create_urandom_sample()
     samples = np.zeros((n, len(x)))
     diff_samples = []
     # print x
 
-    llh_old = llh_func(x)
+    llh_old = llh_func(x, seed)
     accepted_count = 0
 
     for i in xrange(n):
         x_new = generate_sample_prop(x)#x + np.random.randn(10) * prop_sigma
         # x_new = create_urandom_sample()
-        llh_new = llh_func(x_new)
+        llh_new = llh_func(x_new, seed)
 
-        if (i%500 == 0 and i != 0):
-            print i, '/', n
-            print 'llh new: ', llh_new, 'llh old: ', llh_old
+        # if (i%500 == 0 and i != 0):
+        #     print i, '/', n
+        #     print 'llh new: ', llh_new, 'llh old: ', llh_old
 
         alpha = min(1, np.exp(llh_new - llh_old))
         if np.random.uniform(0, 1) <= alpha:
@@ -161,14 +187,15 @@ def mhmc(n, prop_sigma=1, llh_func=get_vel_LLH):
             # print 'Accepted, new llh ', llh_new
         samples[i] = x
     print 'Accepted ratio:', float(accepted_count)/n
-    print 'accepted_count: ', accepted_count
-    return samples, diff_samples
+    # print 'accepted_count: ', accepted_count
+    return samples, diff_samples, seed
 
-def mhmc_log_result(list, max_elem, result):
-    _, diff_samples = result
+def mhmc_log_result(list, seed_list, max_elem, result):
+    _, diff_samples, seed = result
     get_elem = min(len(diff_samples), max_elem)
     if get_elem:
         list.append(np.asarray(diff_samples[-get_elem:]))
+        seed_list.append(seed)
 
 def parallel_mhmc(s, n, p, prop_sigma=1, llh_func=get_vel_LLH):
     '''
@@ -176,24 +203,29 @@ def parallel_mhmc(s, n, p, prop_sigma=1, llh_func=get_vel_LLH):
     results
     '''
     result_list = []
+    seed_list = []
     pool = mp.Pool()
     for i in range(s):
         pool.apply_async(mhmc,
                          args = (n, prop_sigma, llh_func, ),
-                         callback = lambda x: mhmc_log_result(result_list, p, x))
+                         callback = lambda res:
+                                mhmc_log_result(result_list, seed_list, p, res))
     pool.close()
     pool.join()
     result_list = np.asarray(result_list)
 
     # Now compress list
     samples = []
-    for c in result_list: # for each chain
+    samples_seeds = []
+    for c, seeds in zip(result_list, seed_list): # for each chain
         for s in c: # for each sample in the chain return
             samples.append(s)
+            samples_seeds.append(seeds)
     samples = np.asarray(samples)
+    samples_seeds = np.asarray(samples_seeds)
 
-    print 'Sample shape: ', samples.shape
-    return samples
+    print 'Samples shape: ', samples.shape
+    return samples, samples_seeds
 
 if __name__ == "__main__":
 
